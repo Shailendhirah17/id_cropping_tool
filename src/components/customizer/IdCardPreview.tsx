@@ -1,0 +1,812 @@
+import { Group, Rect, Text, Image, Transformer, Circle, RegularPolygon, Line } from 'react-konva';
+import { useConfiguratorStore } from '../../store/useConfiguratorStore';
+import { useCanvasImage } from '../../hooks/useCanvasImage';
+import { getBatchImage, batchImageStore } from './workspace/SetupMode';
+import { useRef, useEffect, useState } from 'react';
+import QRCode from 'qrcode';
+import JsBarcode from 'jsbarcode';
+
+const cardSizes: Record<string, { width: number; height: number }> = {
+  '86x54': { width: 244, height: 153 },
+  '100x70': { width: 283, height: 198 },
+  '54x86': { width: 153, height: 244 },
+  '70x100': { width: 198, height: 283 },
+};
+
+const getKonvaFill = (fill: string, width: number, height: number) => {
+  if (!fill) return { fill: '#ffffff' };
+  if (typeof fill === 'string' && fill.includes('linear-gradient')) {
+    const colors = fill.match(/#(?:[0-9a-fA-F]{3}){1,2}/g);
+    if (colors && colors.length >= 2) {
+      return {
+        fillLinearGradientStartPoint: { x: 0, y: 0 },
+        fillLinearGradientEndPoint: { x: width, y: height },
+        fillLinearGradientColorStops: [0, colors[0], 1, colors[colors.length - 1]],
+      };
+    }
+  }
+  return { fill };
+};
+
+function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick, isSelected, isReviewStep, record, mapping, isMappingStep, onMappingClick, onGuidesChange, cardSize }: {
+  element: any;
+  onDragEnd: (id: string, pos: { x: number; y: number }) => void;
+  onTransformEnd: (id: string, attrs: any) => void;
+  onClick: (id: string, e: any) => void;
+  onDblClick?: (id: string, e: any) => void;
+  isSelected?: boolean;
+  isReviewStep?: boolean;
+  record?: any;
+  mapping?: Record<string, string>;
+  isMappingStep?: boolean;
+  onMappingClick?: (id: string, sideName: string, e: any) => void;
+  onGuidesChange?: (guides: {type: 'vertical'|'horizontal', pos: number}[]) => void;
+  cardSize?: {width: number, height: number};
+}) {
+  const mappedKey = mapping?.[element.id];
+  const dynamicValue = (record && mappedKey) ? record[mappedKey] : null;
+  const storeDatasetImages = useConfiguratorStore(state => state.design.idCard.bulkWorkflow.datasetImages);
+  const imageMatchColumn = useConfiguratorStore(state => state.design.idCard.bulkWorkflow.imageMatchColumn);
+
+  const [generatedSrc, setGeneratedSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (element.type === 'qr') {
+      const val = dynamicValue || element.content || 'QR';
+      QRCode.toDataURL(val, { margin: 1, width: element.width || 100, color: { dark: element.fill || '#000000', light: '#ffffff00' } })
+        .then(url => { if (active) setGeneratedSrc(url); })
+        .catch(() => {});
+    } else if (element.type === 'barcode') {
+      const val = dynamicValue || element.content || '123456789';
+      try {
+        const canvas = document.createElement('canvas');
+        JsBarcode(canvas, val, { displayValue: false, margin: 0, width: 2, height: element.height || 50, lineColor: element.fill || '#000000', background: 'transparent' });
+        if (active) setGeneratedSrc(canvas.toDataURL());
+      } catch (e) {
+        // Silently fail for invalid barcode formats until they type a valid one
+      }
+    }
+    return () => { active = false; };
+  }, [element.type, dynamicValue, element.content, element.width, element.height, element.fill]);
+
+  const fallbackImage = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNlMmU4ZjAiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB4PSIzIiB5PSIzIiB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHJ4PSIyIiByeT0iMiI+PC9yZWN0PjxjaXJjbGUgY3g9IjgiIGN5PSI4IiByPSIzIj48L2NpcmNsZT48cGF0aCBkPSJNMjEgMTVsLTUtNWwtNiA2Ij48L3BhdGg+PC9zdmc+';
+  const dynString = dynamicValue?.toString()?.trim() || '';
+  
+  // Image lookup: checks both the Zustand store and module-level batchImageStore
+  const findImageUrl = (rawKey: string | undefined | null): string | undefined => {
+    if (!rawKey) return undefined;
+    const trimmed = rawKey.toString().trim();
+    if (!trimmed) return undefined;
+    
+    // Core check function
+    const checkKey = (k: string): string | undefined => {
+      // 1. Check Zustand store first
+      if (storeDatasetImages) {
+        if (storeDatasetImages[k]) return storeDatasetImages[k];
+        // Case-insensitive fallback
+        const lower = k.toLowerCase();
+        for (const imgKey of Object.keys(storeDatasetImages)) {
+          if (imgKey.toLowerCase() === lower) return storeDatasetImages[imgKey];
+        }
+      }
+      
+      // 2. Check module-level batch image store
+      const batchUrl = getBatchImage(k);
+      if (batchUrl) return batchUrl;
+      
+      return undefined;
+    };
+
+    // Advanced check: extract number and check against all images
+    const checkNumberOnly = (numStr: string): string | undefined => {
+       if (!numStr) return undefined;
+       if (storeDatasetImages) {
+           for (const imgKey of Object.keys(storeDatasetImages)) {
+               if (imgKey.replace(/\D/g, '') === numStr) return storeDatasetImages[imgKey];
+           }
+       }
+       for (const imgKey of Object.keys(batchImageStore)) {
+           if (imgKey.replace(/\D/g, '') === numStr) return batchImageStore[imgKey];
+       }
+       return undefined;
+    };
+
+    // Try exact value first
+    let found = checkKey(trimmed);
+    if (found) return found;
+
+    // If Excel contained "183411.JPG", strip extension and try again
+    const extIdx = trimmed.lastIndexOf('.');
+    if (extIdx > 0) {
+      const baseKey = trimmed.substring(0, extIdx).trim();
+      if (baseKey !== trimmed) {
+        found = checkKey(baseKey);
+        if (found) return found;
+      }
+    }
+
+    // Try numeric-only mapping
+    // If dataset says "file photo no:183411.JPG", extracts "183411"
+    const numOnly = trimmed.replace(/\D/g, '');
+    if (numOnly && numOnly.length > 0) {
+        found = checkNumberOnly(numOnly);
+        if (found) return found;
+    }
+
+    return undefined;
+  };
+
+  let imageSrc: string | null = element.src || null;
+  
+  if ((element.type === 'image' || element.type === 'frame') && mappedKey && record) {
+    // Strategy 1: Use the global imageMatchColumn to look up the photo
+    if (!imageSrc && imageMatchColumn) {
+      const matchVal = record[imageMatchColumn];
+      if (matchVal !== undefined && matchVal !== null) {
+        const matchKey = String(matchVal).trim();
+        imageSrc = findImageUrl(matchKey) || null;
+      }
+    }
+    
+    // Strategy 2: Use the element's own mapped column value
+    if (!imageSrc) {
+      const directVal = record[mappedKey];
+      if (directVal !== undefined && directVal !== null) {
+        const directKey = String(directVal).trim();
+        imageSrc = findImageUrl(directKey) || null;
+      }
+    }
+    
+    // Strategy 3: Check if the value itself is a URL
+    if (!imageSrc && dynString) {
+      if (dynString.startsWith('http')) {
+        imageSrc = dynString;
+      } else {
+        imageSrc = findImageUrl(dynString) || null;
+      }
+    }
+  } else if (element.type === 'qr' || element.type === 'barcode') {
+    imageSrc = generatedSrc;
+  }
+  
+  if (element.type === 'image' && element._debugLogged !== imageSrc) {
+    console.log(`[IdCardPreview Debug] Image Element ID: ${element.id}`);
+    console.log(`- Mapped Key: ${mappedKey}`);
+    console.log(`- Record present: ${!!record}`);
+    console.log(`- Image Match Column: ${imageMatchColumn}`);
+    if (record) {
+      console.log(`- Record Match Val: ${record[imageMatchColumn]}`);
+      console.log(`- Record Direct Val: ${record[mappedKey]}`);
+    }
+    console.log(`- Store Keys Count: ${Object.keys(storeDatasetImages || {}).length}`);
+    console.log(`- BatchStore Keys Count: ${Object.keys(batchImageStore || {}).length}`);
+    console.log(`- Resolved Image Src (first 30 chars): ${imageSrc ? imageSrc.substring(0, 30) : 'null'}`);
+    element._debugLogged = imageSrc;
+  }
+
+  // Final fallback
+  if (!imageSrc) imageSrc = fallbackImage;
+
+  const image = useCanvasImage(imageSrc);
+  const lastClickTimeRef = useRef(0);
+  const shapeRef = useRef<any>(null);
+  const trRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (isSelected && trRef.current && shapeRef.current) {
+      // Attach to the outer Group/Shape provided by shapeRef
+      trRef.current.nodes([shapeRef.current]);
+      const layer = trRef.current.getLayer();
+      if (layer) layer.batchDraw();
+    }
+  }, [isSelected, element, trRef.current, shapeRef.current]);
+
+  const handleTap = (e: any) => {
+    e.cancelBubble = true;
+    if (isMappingStep && onMappingClick) {
+      const sideName = (e.target.parent as any)?.sideName || 'front';
+      onMappingClick(element.id, sideName, e);
+      return;
+    }
+    const time = new Date().getTime();
+    if (time - lastClickTimeRef.current < 400) {
+      if (onDblClick) onDblClick(element.id, e);
+    } else {
+      if (onClick) onClick(element.id, e);
+    }
+    lastClickTimeRef.current = time;
+  };
+
+  const commonProps = {
+    ref: shapeRef,
+    id: element.id,
+    x: element.x,
+    y: element.y,
+    rotation: element.rotation || 0,
+    scaleX: element.scaleX || 1,
+    scaleY: element.scaleY || 1,
+    opacity: element.opacity !== undefined ? element.opacity : 1,
+    draggable: !isReviewStep,
+    onDragMove: (e: any) => {
+      if (isReviewStep || !cardSize || !onGuidesChange) return;
+
+      const node = e.target;
+      const scaleX = node.scaleX();
+      const scaleY = node.scaleY();
+      
+      let w = element.width || node.width();
+      let h = element.height || node.height();
+      if (element.type === 'text') {
+        w = node.width() * scaleX;
+        h = node.height() * scaleY;
+      } else {
+        w = w * scaleX;
+        h = h * scaleY;
+      }
+      
+      const newGuides: {type: 'vertical'|'horizontal', pos: number}[] = [];
+      const threshold = 5;
+      
+      const showGrid = useConfiguratorStore.getState().design.idCard.showGrid;
+      
+      const xPoints = [0, cardSize.width / 2, cardSize.width];
+      const yPoints = [0, cardSize.height / 2, cardSize.height];
+      
+      if (showGrid) {
+        for (let i = 0; i <= cardSize.width; i += 10) xPoints.push(i);
+        for (let i = 0; i <= cardSize.height; i += 10) yPoints.push(i);
+      }
+      
+      const siblings = node.parent?.children || [];
+      siblings.forEach((sib: any) => {
+        // Skip current node, transformer, and background/grid UI elements
+        if (sib === node || sib.className === 'Transformer' || sib.name() === 'background') return;
+        
+        // Only allow snapping to elements that have an ID (i.e., they are design elements)
+        // This prevents snapping to generic decoration groups or lines that aren't part of the design
+        if (!sib.id()) {
+           // Fallback check: if it's a Line or Group but has a design ID, allow it.
+           // Note: Konva's className check for 'Group' is sib.className === 'Group'
+           if (sib.className === 'Group' || sib.className === 'Line') return;
+        }
+
+        try {
+          let sx = sib.x();
+          let sy = sib.y();
+          let sw = sib.width() * sib.scaleX();
+          let sh = sib.height() * sib.scaleY();
+          xPoints.push(sx, sx + sw / 2, sx + sw);
+          yPoints.push(sy, sy + sh / 2, sy + sh);
+        } catch(err) {}
+      });
+      
+      const nLeft = node.x();
+      const nCenter = node.x() + w / 2;
+      const nRight = node.x() + w;
+      
+      let snapX: {pos: number, offset: number} | null = null;
+      let minDiffX = threshold;
+      
+      xPoints.forEach(px => {
+        [ {c: nLeft, off: 0}, {c: nCenter, off: w/2}, {c: nRight, off: w} ].forEach(pt => {
+          const diff = Math.abs(pt.c - px);
+          if (diff < minDiffX) {
+            minDiffX = diff;
+            snapX = { pos: Math.round(px), offset: pt.off };
+          }
+        });
+      });
+      
+      const nTop = node.y();
+      const nMiddle = node.y() + h / 2;
+      const nBottom = node.y() + h;
+      
+      let snapY: {pos: number, offset: number} | null = null;
+      let minDiffY = threshold;
+      
+      yPoints.forEach(py => {
+        [ {c: nTop, off: 0}, {c: nMiddle, off: h/2}, {c: nBottom, off: h} ].forEach(pt => {
+          const diff = Math.abs(pt.c - py);
+          if (diff < minDiffY) {
+            minDiffY = diff;
+            snapY = { pos: Math.round(py), offset: pt.off };
+          }
+        });
+      });
+      
+      if (snapX) {
+        node.x(snapX.pos - snapX.offset);
+        newGuides.push({ type: 'vertical', pos: snapX.pos });
+      }
+      
+      if (snapY) {
+        node.y(snapY.pos - snapY.offset);
+        newGuides.push({ type: 'horizontal', pos: snapY.pos });
+      }
+
+      onGuidesChange(newGuides);
+    },
+    onDragEnd: (e: any) => {
+      onGuidesChange?.([]);
+      onDragEnd(element.id, { x: e.target.x(), y: e.target.y() });
+    },
+    onTransformEnd: (e: any) => {
+      const node = shapeRef.current;
+      const scaleX = node.scaleX();
+      const scaleY = node.scaleY();
+      
+      node.scaleX(1);
+      node.scaleY(1);
+
+      if (element.type === 'text') {
+        onTransformEnd(element.id, {
+          x: node.x(),
+          y: node.y(),
+          rotation: node.rotation(),
+          width: Math.max(5, node.width() * scaleX),
+          fontSize: element.fontSize * Math.max(scaleX, scaleY),
+        });
+      } else {
+        onTransformEnd(element.id, {
+          x: node.x(),
+          y: node.y(),
+          rotation: node.rotation(),
+          width: Math.max(5, node.width() * scaleX),
+          height: Math.max(5, node.height() * scaleY),
+        });
+      }
+    },
+    onClick: handleTap,
+    onTap: handleTap,
+  };
+
+  let NodeComponent = null;
+  switch (element.type) {
+    case 'text':
+      NodeComponent = <Text {...commonProps} text={dynamicValue || element.content} fontSize={element.fontSize} fill={element.fill} width={element.width} align={element.align} fontStyle={element.fontStyle} fontFamily={element.fontFamily || 'sans-serif'} lineHeight={element.lineHeight || 1.2} letterSpacing={element.letterSpacing || 0} />;
+      break;
+    case 'image':
+    case 'qr':
+    case 'barcode':
+      NodeComponent = <Image {...commonProps} image={image} width={element.width} height={element.height || element.width} cornerRadius={element.cornerRadius || 0} />;
+      break;
+    case 'rect':
+      NodeComponent = <Rect {...commonProps} width={element.width} height={element.height} fill={element.fill} cornerRadius={element.cornerRadius || 0} stroke={element.stroke} strokeWidth={element.strokeWidth} />;
+      break;
+    case 'circle':
+      NodeComponent = <Circle {...commonProps} x={element.x + (element.width || 0)/2} y={element.y + (element.width || 0)/2} radius={(element.width || 0) / 2} fill={element.fill} stroke={element.stroke} strokeWidth={element.strokeWidth} />;
+      break;
+    case 'triangle':
+      NodeComponent = <RegularPolygon {...commonProps} x={element.x + (element.width || 0)/2} y={element.y + (element.width || 0)/2} sides={3} radius={(element.width || 0) / 1.5} fill={element.fill} stroke={element.stroke} strokeWidth={element.strokeWidth} />;
+      break;
+    case 'rhombus':
+      NodeComponent = <RegularPolygon {...commonProps} x={element.x + (element.width || 0)/2} y={element.y + (element.width || 0)/2} sides={4} radius={(element.width || 0) / 1.4} fill={element.fill} stroke={element.stroke} strokeWidth={element.strokeWidth} />;
+      break;
+    case 'line': {
+      const isMask = !!(imageSrc && imageSrc !== fallbackImage);
+      const w = element.width ?? 100;
+      const h = element.height ?? 100;
+      
+      const getLineClip = (ctx: any) => {
+        if (!element.points || element.points.length < 4) return;
+        ctx.beginPath();
+        ctx.moveTo(element.points[0], element.points[1]);
+        for (let i = 2; i < element.points.length; i += 2) {
+          ctx.lineTo(element.points[i], element.points[i+1]);
+        }
+        ctx.closePath();
+      };
+
+      if (isMask) {
+        let imageProps = {};
+        if (image && image.width && image.height) {
+          const iW = image.width;
+          const iH = image.height;
+          const scale = Math.max(w / iW, h / iH);
+          imageProps = {
+            width: w,
+            height: h,
+            crop: {
+              x: (iW - w / scale) / 2,
+              y: (iH - h / scale) / 2,
+              width: w / scale,
+              height: h / scale
+            }
+          };
+        }
+
+        NodeComponent = (
+          <Group {...commonProps}>
+            <Group clipFunc={getLineClip}>
+               <Image image={image} {...imageProps} />
+            </Group>
+            <Line 
+              points={element.points} 
+              stroke={element.stroke || '#5d5fef'} 
+              strokeWidth={element.strokeWidth || 1} 
+              tension={element.tension || 0.5} 
+              lineCap="round" 
+              lineJoin="round" 
+              opacity={0.3}
+              closed
+            />
+          </Group>
+        );
+      } else {
+        NodeComponent = (
+          <Line 
+            {...commonProps} 
+            points={element.points} 
+            stroke={element.stroke || '#5d5fef'} 
+            strokeWidth={element.strokeWidth || 2} 
+            tension={element.tension || 0.5} 
+            lineCap="round" 
+            lineJoin="round" 
+          />
+        );
+      }
+      break;
+    }
+    case 'frame': {
+      const w = element.width || 100;
+      const h = element.height || 100;
+      
+      const getClipFunc = (ctx: any) => {
+        const shape = element.shapeType || 'rect';
+        ctx.beginPath();
+        
+        // Helper for N-sided polygons
+        const poly = (sides: number) => {
+          const r = Math.min(w, h) / 2;
+          for (let i = 0; i < sides; i++) {
+            const angle = (i * 2 * Math.PI) / sides - Math.PI / 2;
+            ctx.lineTo(w/2 + r * Math.cos(angle), h/2 + r * Math.sin(angle));
+          }
+        };
+
+        // Helper for stars
+        const star = (pts: number) => {
+          const r = Math.min(w, h) / 2;
+          for (let i = 0; i < pts * 2; i++) {
+            const rad = i % 2 === 0 ? r : r / 2;
+            const angle = (i * Math.PI) / pts - Math.PI / 2;
+            ctx.lineTo(w/2 + rad * Math.cos(angle), h/2 + rad * Math.sin(angle));
+          }
+        };
+
+        if (shape === 'circle') {
+          ctx.arc(w/2, h/2, Math.min(w,h)/2, 0, Math.PI * 2);
+        } else if (shape.startsWith('poly-')) {
+          poly(parseInt(shape.split('-')[1]));
+        } else if (shape.startsWith('star-')) {
+          star(parseInt(shape.split('-')[1]));
+        } else if (shape === 'hexagon') {
+          poly(6);
+        } else if (shape === 'star') {
+          star(5);
+        } else if (shape === 'heart') {
+          const r = Math.min(w, h) / 2;
+          ctx.moveTo(w/2, h/2 + r * 0.7);
+          ctx.bezierCurveTo(w/2 - r, h/2 - r*0.2, w/2 - r*0.5, h/2 - r*1.2, w/2, h/2 - r*0.4);
+          ctx.bezierCurveTo(w/2 + r*0.5, h/2 - r*1.2, w/2 + r, h/2 - r*0.2, w/2, h/2 + r * 0.7);
+        } else if (shape === 'arrow-right') {
+          ctx.moveTo(0, h*0.3); ctx.lineTo(w*0.6, h*0.3); ctx.lineTo(w*0.6, 0); ctx.lineTo(w, h/2); ctx.lineTo(w*0.6, h); ctx.lineTo(w*0.6, h*0.7); ctx.lineTo(0, h*0.7);
+        } else if (shape === 'arrow-left') {
+          ctx.moveTo(w, h*0.3); ctx.lineTo(w*0.4, h*0.3); ctx.lineTo(w*0.4, 0); ctx.lineTo(0, h/2); ctx.lineTo(w*0.4, h); ctx.lineTo(w*0.4, h*0.7); ctx.lineTo(w, h*0.7);
+        } else if (shape === 'arrow-up') {
+          ctx.moveTo(w*0.3, h); ctx.lineTo(w*0.3, h*0.4); ctx.lineTo(0, h*0.4); ctx.lineTo(w/2, 0); ctx.lineTo(w, h*0.4); ctx.lineTo(w*0.7, h*0.4); ctx.lineTo(w*0.7, h);
+        } else if (shape === 'arrow-down') {
+          ctx.moveTo(w*0.3, 0); ctx.lineTo(w*0.3, h*0.6); ctx.lineTo(0, h*0.6); ctx.lineTo(w/2, h); ctx.lineTo(w, h*0.6); ctx.lineTo(w*0.7, h*0.6); ctx.lineTo(w*0.7, 0);
+        } else if (shape === 'pill') {
+          ctx.roundRect(0, 0, w, h, h/2);
+        } else if (shape === 'diamond') {
+          ctx.moveTo(w/2, 0); ctx.lineTo(w, h/2); ctx.lineTo(w/2, h); ctx.lineTo(0, h/2);
+        } else if (shape === 'blob') {
+          const r = Math.min(w, h) / 2;
+          ctx.moveTo(w/2 + r, h/2);
+          ctx.bezierCurveTo(w/2 + r, h/2 + r*0.5, w/2 + r*0.5, h/2 + r, w/2, h/2 + r);
+          ctx.bezierCurveTo(w/2 - r*0.5, h/2 + r, w/2 - r, h/2 + r*0.5, w/2 - r, h/2);
+          ctx.bezierCurveTo(w/2 - r, h/2 - r*0.5, w/2 - r*0.5, h/2 - r, w/2, h/2 - r);
+          ctx.bezierCurveTo(w/2 + r*0.5, h/2 - r, w/2 + r, h/2 - r*0.5, w/2 + r, h/2);
+        } else if (shape === 'shield') {
+          ctx.moveTo(w/2, 0); ctx.lineTo(w, h*0.2); ctx.lineTo(w*0.9, h*0.8); ctx.bezierCurveTo(w*0.9, h, w/2, h, w/2, h); ctx.bezierCurveTo(w/2, h, w*0.1, h, w*0.1, h*0.8); ctx.lineTo(0, h*0.2);
+        } else if (shape === 'cloud') {
+          ctx.moveTo(w*0.2, h*0.7); ctx.bezierCurveTo(0, h*0.7, 0, h*0.3, w*0.2, h*0.4); ctx.bezierCurveTo(w*0.2, 0, w*0.8, 0, w*0.8, h*0.4); ctx.bezierCurveTo(w, h*0.3, w, h*0.7, w*0.8, h*0.7);
+        } else if (shape === 'badge') {
+          const p = 16; const r1 = Math.min(w, h)/2; const r2 = r1 * 0.9;
+          for (let i = 0; i < p * 2; i++) {
+            const r = i % 2 === 0 ? r1 : r2; const a = (i * Math.PI) / p;
+            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
+          }
+        } else if (shape === 'cross') {
+          const s = 0.3;
+          ctx.moveTo(w*s, 0); ctx.lineTo(w*(1-s), 0); ctx.lineTo(w*(1-s), h*s); ctx.lineTo(w, h*s); ctx.lineTo(w, h*(1-s)); ctx.lineTo(w*(1-s), h*(1-s)); ctx.lineTo(w*(1-s), h); ctx.lineTo(w*s, h); ctx.lineTo(w*s, h*(1-s)); ctx.lineTo(0, h*(1-s)); ctx.lineTo(0, h*s); ctx.lineTo(w*s, h*s);
+        } else if (shape === 'parallelogram') {
+          ctx.moveTo(w*0.2, 0); ctx.lineTo(w, 0); ctx.lineTo(w*0.8, h); ctx.lineTo(0, h);
+        } else if (shape === 'trapezoid') {
+          ctx.moveTo(w*0.2, 0); ctx.lineTo(w*0.8, 0); ctx.lineTo(w, h); ctx.lineTo(0, h);
+        } else if (shape.startsWith('chevron-')) {
+          const s = 0.3;
+          if (shape === 'chevron-right') { ctx.moveTo(0,0); ctx.lineTo(w*(1-s), h/2); ctx.lineTo(0,h); ctx.lineTo(w*s, h); ctx.lineTo(w, h/2); ctx.lineTo(w*s, 0); }
+          else if (shape === 'chevron-left') { ctx.moveTo(w,0); ctx.lineTo(w*s, h/2); ctx.lineTo(w,h); ctx.lineTo(w*(1-s), h); ctx.lineTo(0, h/2); ctx.lineTo(w*(1-s), 0); }
+          else if (shape === 'chevron-up') { ctx.moveTo(0,h); ctx.lineTo(w/2, w*s); ctx.lineTo(w,h); ctx.lineTo(w, h*(1-s)); ctx.lineTo(w/2, 0); ctx.lineTo(0, h*(1-s)); }
+          else if (shape === 'chevron-down') { ctx.moveTo(0,0); ctx.lineTo(w/2, h*(1-s)); ctx.lineTo(w,0); ctx.lineTo(w, h*s); ctx.lineTo(w/2, h); ctx.lineTo(0, h*s); }
+        } else if (shape === 'moon') {
+          ctx.arc(w/2, h/2, w*0.4, 0.4, Math.PI * 1.6);
+          ctx.bezierCurveTo(w*0.3, h*0.8, w*0.3, h*0.2, w/2 + w*0.4 * Math.cos(0.4), h/2 + w*0.4 * Math.sin(0.4));
+        } else if (shape === 'sun') {
+          const p = 12; const r1 = w/2; const r2 = w*0.35;
+          for (let i = 0; i < p * 2; i++) {
+            const r = i % 2 === 0 ? r1 : r2; const a = (i * Math.PI) / p;
+            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
+          }
+        } else if (shape === 'tag') {
+          ctx.moveTo(0, 0); ctx.lineTo(w*0.7, 0); ctx.lineTo(w, h/2); ctx.lineTo(w*0.7, h); ctx.lineTo(0, h);
+        } else if (shape === 'flag') {
+          ctx.moveTo(0,0); ctx.lineTo(w, h*0.2); ctx.lineTo(w, h*0.6); ctx.lineTo(0, h*0.4); ctx.lineTo(0, h);
+        } else if (shape === 'marker') {
+          ctx.arc(w/2, h*0.35, w*0.35, 0, Math.PI, true);
+          ctx.lineTo(w/2, h); ctx.closePath();
+        } else if (shape === 'message') {
+          ctx.roundRect(0, 0, w, h*0.8, 10); ctx.moveTo(w*0.2, h*0.8); ctx.lineTo(w*0.1, h); ctx.lineTo(w*0.4, h*0.8);
+        } else if (shape === 'thought') {
+          ctx.ellipse(w/2, h*0.4, w*0.5, h*0.4, 0, 0, Math.PI*2);
+          ctx.moveTo(w*0.2, h*0.8); ctx.ellipse(w*0.2, h*0.8, 5, 5, 0, 0, Math.PI*2);
+          ctx.moveTo(w*0.1, h*0.9); ctx.ellipse(w*0.1, h*0.9, 3, 3, 0, 0, Math.PI*2);
+        } else if (shape === 'quote') {
+          ctx.moveTo(0,0); ctx.lineTo(w, 0); ctx.lineTo(w*0.8, h); ctx.lineTo(0, h); ctx.lineTo(w*0.2, h/2);
+        } else if (shape === 'seal') {
+          const p = 24; const r1 = w/2; const r2 = w*0.45;
+          for (let i = 0; i < p * 2; i++) {
+            const r = i % 2 === 0 ? r1 : r2; const a = (i * Math.PI) / p;
+            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
+          }
+        } else if (shape === 'burst') {
+          const p = 12; 
+          for (let i = 0; i < p * 2; i++) {
+            const r = i % 2 === 0 ? w/2 : w*0.2; const a = (i * Math.PI) / p;
+            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
+          }
+        } else if (shape === 'leaf') {
+          ctx.moveTo(w/2, h); ctx.bezierCurveTo(w, h*0.5, w, 0, w/2, 0); ctx.bezierCurveTo(0, 0, 0, h*0.5, w/2, h);
+        } else {
+          const r = element.cornerRadius || 0;
+          ctx.roundRect(0, 0, w, h, r);
+        }
+        ctx.closePath();
+      };
+
+      const hasImage = !!image;
+      const framePlaceholder = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNGMUY1RjkiLz48cGF0aCBkPSJNNTAgMzVDNDEgMzUgMzQgNDIgMzQgNTFDMzQgNjAgNDEgNjcgNTAgNjdDNTkgNjcgNjYgNjAgNjYgNTFDNjYgNDIgNTkgMzUgNTAgMzVaTTUwIDYyQzQ0IDYyIDM5IDU3IDM5IDUxQzM5IDQ1IDQ0IDQwIDUwIDQwQzU2IDQwIDYxIDQ1IDYxIDUxQzYxIDU3IDU2IDYyIDUwIDYyWiIgZmlsbD0iI0QxRDVREIi8+PC9zdmc+';
+      
+      let imageProps = {};
+      if (image && image.width && image.height) {
+        const iW = image.width;
+        const iH = image.height;
+        const fW = w;
+        const fH = h;
+        const scale = Math.max(fW / iW, fH / iH);
+        imageProps = {
+          width: fW,
+          height: fH,
+          crop: {
+            x: (iW - fW / scale) / 2,
+            y: (iH - fH / scale) / 2,
+            width: fW / scale,
+            height: fH / scale
+          }
+        };
+      }
+
+      NodeComponent = (
+        <Group {...commonProps}>
+          {/* Background/Stroke of the frame */}
+          <Rect width={w} height={h} fill="#f1f5f9" stroke={element.stroke || '#e2e8f0'} strokeWidth={element.strokeWidth || 1} cornerRadius={element.cornerRadius || 0} opacity={hasImage ? 0.2 : 1} />
+          <Group clipFunc={getClipFunc}>
+             <Image image={image} {...imageProps} />
+          </Group>
+        </Group>
+      );
+      break;
+    }
+  }
+
+  return (
+    <Group>
+      {NodeComponent}
+      {isSelected && !isReviewStep && (
+        <Transformer
+          ref={trRef}
+          boundBoxFunc={(oldBox, newBox) => {
+            if (newBox.width < 5 || newBox.height < 5) return oldBox;
+            return newBox;
+          }}
+        />
+      )}
+    </Group>
+  );
+}
+
+function BackgroundImage({ src, width, height }: { src: string, width: number, height: number }) {
+  const image = useCanvasImage(src);
+  
+  if (!image) return null;
+  
+  if (!image.width || !image.height) {
+    return <Image image={image} width={width} height={height} />;
+  }
+
+  const scale = Math.max(width / image.width, height / image.height);
+  const ix = (image.width - width / scale) / 2;
+  const iy = (image.height - height / scale) / 2;
+
+  return (
+    <Image 
+      image={image} 
+      width={width} 
+      height={height} 
+      crop={{
+        x: ix,
+        y: iy,
+        width: width / scale,
+        height: height / scale
+      }}
+    />
+  );
+}
+
+export default function IdCardPreview({ onSelectElement, onUpdateElement, onDblClickElement, isReviewStep, forceSide, record, mapping, isMappingStep, onMappingClick }: {
+  onSelectElement?: (id: string | null, sideName?: string) => void;
+  onUpdateElement?: (id: string, pos: any, sideName: string) => void;
+  onDblClickElement?: (id: string, sideName: string, e: any) => void;
+  isReviewStep?: boolean;
+  forceSide?: 'front' | 'back';
+  record?: any;
+  mapping?: Record<string, string>;
+  isMappingStep?: boolean;
+  onMappingClick?: (id: string, sideName: string, e: any) => void;
+}) {
+  const design = useConfiguratorStore((state) => state.design);
+  const [guides, setGuides] = useState<{type: 'vertical'|'horizontal', pos: number}[]>([]);
+  const { size, activeSide, showBothSides, showGrid } = design.idCard;
+  
+  const { width, height } = cardSizes[size] || cardSizes['86x54'];
+  const isHorizontal = width > height;
+
+  const renderSide = (sideName: 'front' | 'back', offsetX: number, offsetY = 0) => {
+    const sideData = design.idCard[sideName];
+    const isActive = sideName === activeSide;
+    
+    if (forceSide && sideName !== forceSide) return null;
+
+    return (
+      <Group 
+        x={offsetX} 
+        y={offsetY} 
+        opacity={showBothSides && !isActive && !forceSide ? 0.7 : 1}
+        name={sideName}
+      >
+        <Rect 
+          width={width} 
+          height={height} 
+          {...getKonvaFill(sideData.backgroundColor, width, height)} 
+          cornerRadius={15} 
+          stroke={isActive ? "#5d5fef" : "#ccc"} 
+          strokeWidth={isActive ? 2 : 1} 
+          shadowColor="rgba(0,0,0,0.1)" 
+          shadowBlur={10} 
+          shadowOffsetY={4} 
+          onMouseDown={(e) => {
+            if (isReviewStep) return;
+            e.cancelBubble = true;
+            onSelectElement && onSelectElement(null, sideName);
+          }}
+          onTap={(e) => {
+            if (isReviewStep) return;
+            e.cancelBubble = true;
+            onSelectElement && onSelectElement(null, sideName);
+          }}
+        />
+        {sideData.backgroundImage && (
+          <Group clipFunc={(ctx: any) => {
+            ctx.beginPath();
+            ctx.moveTo(15, 0);
+            ctx.lineTo(width - 15, 0);
+            ctx.quadraticCurveTo(width, 0, width, 15);
+            ctx.lineTo(width, height - 15);
+            ctx.quadraticCurveTo(width, height, width - 15, height);
+            ctx.lineTo(15, height);
+            ctx.quadraticCurveTo(0, height, 0, height - 15);
+            ctx.lineTo(0, 15);
+            ctx.quadraticCurveTo(0, 0, 15, 0);
+            ctx.closePath();
+          }}>
+            <BackgroundImage 
+              src={sideData.backgroundImage} 
+              width={width} 
+              height={height} 
+            />
+          </Group>
+        )}
+        {showGrid && !isReviewStep && (
+          <Group>
+            {/* Regular grid lines */}
+            <Group opacity={0.2}>
+              {Array.from({ length: Math.floor(width / 10) + 1 }).map((_, i) => (
+                <Line key={`grid-v-${i}`} points={[i * 10, 0, i * 10, height]} stroke="#5d5fef" strokeWidth={0.5} listening={false} dash={[2, 2]} />
+              ))}
+              {Array.from({ length: Math.floor(height / 10) + 1 }).map((_, i) => (
+                <Line key={`grid-h-${i}`} points={[0, i * 10, width, i * 10]} stroke="#5d5fef" strokeWidth={0.5} listening={false} dash={[2, 2]} />
+              ))}
+            </Group>
+            {/* Center cross-hair lines */}
+            <Line points={[width / 2, 0, width / 2, height]} stroke="#ff00ff" strokeWidth={1} listening={false} dash={[6, 4]} opacity={0.4} />
+            <Line points={[0, height / 2, width, height / 2]} stroke="#ff00ff" strokeWidth={1} listening={false} dash={[6, 4]} opacity={0.4} />
+          </Group>
+        )}
+        <Group clipFunc={(ctx: any) => {
+          ctx.beginPath();
+          ctx.moveTo(15, 0);
+          ctx.lineTo(width - 15, 0);
+          ctx.quadraticCurveTo(width, 0, width, 15);
+          ctx.lineTo(width, height - 15);
+          ctx.quadraticCurveTo(width, height, width - 15, height);
+          ctx.lineTo(15, height);
+          ctx.quadraticCurveTo(0, height, 0, height - 15);
+          ctx.lineTo(0, 15);
+          ctx.quadraticCurveTo(0, 0, 15, 0);
+          ctx.closePath();
+        }}>
+          {sideData.elements.map((el) => (
+              <CanvasElement 
+                key={el.id} 
+                element={el} 
+                onDragEnd={(id, pos) => onUpdateElement && onUpdateElement(id, pos, sideName)} 
+                onTransformEnd={(id, pos) => onUpdateElement && onUpdateElement(id, pos, sideName)}
+                onClick={(id) => onSelectElement && onSelectElement(id, sideName)} 
+                onDblClick={(id, e) => onDblClickElement && onDblClickElement(id, sideName, e)}
+                isSelected={design.idCard.selected === el.id}
+                isReviewStep={isReviewStep || isMappingStep}
+                isMappingStep={isMappingStep}
+                onMappingClick={onMappingClick}
+                record={record}
+                mapping={mapping}
+                onGuidesChange={setGuides}
+                cardSize={{width, height}}
+              />
+          ))}
+        </Group>
+        
+        {guides.map((g, i) => (
+          <Line
+            key={`guide-${i}`}
+            points={g.type === 'vertical' ? [g.pos, 0, g.pos, height] : [0, g.pos, width, g.pos]}
+            stroke="#ff00ff"
+            strokeWidth={1}
+            dash={[4, 4]}
+            listening={false}
+          />
+        ))}
+
+        {showBothSides && (
+          <Text text={sideName.toUpperCase()} x={0} y={height + 15} width={width} align="center" fontSize={12} fill="#919191" fontStyle="bold" />
+        )}
+      </Group>
+    );
+  };
+
+  return (
+    <Group 
+      onMouseDown={(e) => {
+        if (isReviewStep) return;
+        if (e.target === e.target.getStage()) {
+          onSelectElement && onSelectElement(null);
+        }
+      }}
+    >
+      {renderSide(forceSide || (showBothSides ? 'front' : (activeSide as 'front' | 'back')), 0, 0)}
+      {showBothSides && !forceSide && renderSide('back', isHorizontal ? 0 : width + 40, isHorizontal ? height + 40 : 0)}
+    </Group>
+  );
+}
