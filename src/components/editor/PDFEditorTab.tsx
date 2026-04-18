@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Canvas, FabricImage, IText, Rect } from 'fabric';
-import { loadPDFPageAsImage, getPDFPageCount } from '@/utils/pdfHandler';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+import { loadPDFPageAsImage } from '@/utils/pdfHandler';
 import { exportMultiPagePDF } from '@/utils/exportPDF';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import EditorToolbar from './EditorToolbar';
 import PropertiesPanel from './PropertiesPanel';
@@ -23,6 +27,7 @@ const PDFEditorTab: React.FC = () => {
   const [totalPagesRef] = [useRef(0)];
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const pdfFileRef = useRef<File | null>(null);
+  const pdfDocRef = useRef<any>(null);
   // Use a ref for pageStates to avoid stale closure in loadPageOntoCanvas
   const pageStatesRef = useRef<Map<number, PageState>>(new Map());
   const [pageStates, _setPageStates] = useState<Map<number, PageState>>(new Map());
@@ -49,9 +54,95 @@ const PDFEditorTab: React.FC = () => {
       backgroundColor: '#f1f5f9',
     });
 
+    // Snapping logic
+    const grid = 10;
+    fabricRef.current.on('object:moving', (options) => {
+      if (options.target) {
+        options.target.set({
+          left: Math.round(options.target.left! / grid) * grid,
+          top: Math.round(options.target.top! / grid) * grid,
+        });
+      }
+    });
+
     fabricRef.current.on('object:added', () => { if (!suppressSave.current) saveState(); });
     fabricRef.current.on('object:modified', () => { if (!suppressSave.current) saveState(); });
     fabricRef.current.on('object:removed', () => { if (!suppressSave.current) saveState(); });
+
+    // Handle Image Hover — change cursor for replaceable objects
+    fabricRef.current.on('mouse:over', (e) => {
+      const obj = e.target;
+      if (obj && (obj as any).isPDFImage) {
+        obj.set('hoverCursor', 'pointer');
+      }
+    });
+
+    // Handle Object Click for Replacement
+    fabricRef.current.on('mouse:down', (e) => {
+      const obj = e.target as any;
+      if (obj && obj.isPDFImage) {
+        handleReplaceImage(obj);
+      }
+    });
+
+    // Enter edit mode on single click (mouse up to avoid drag conflict)
+    fabricRef.current.on('mouse:up', (e) => {
+      const obj = e.target as any;
+      if (obj && obj.type === 'i-text') {
+        fabricRef.current?.setActiveObject(obj);
+        obj.enterEditing();
+        obj.selectAll();
+        fabricRef.current?.requestRenderAll();
+      }
+    });
+
+    // Zoom logic
+    fabricRef.current.on('mouse:wheel', function(opt) {
+      if (!fabricRef.current) return;
+      var delta = opt.e.deltaY;
+      var zoom = fabricRef.current.getZoom();
+      zoom *= 0.999 ** delta;
+      if (zoom > 20) zoom = 20;
+      if (zoom < 0.1) zoom = 0.1;
+      fabricRef.current.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+      opt.e.preventDefault();
+      opt.e.stopPropagation();
+    });
+
+    // Handle custom image replace event from PropertiesPanel
+    fabricRef.current.on('custom:replace_image', async (e: any) => {
+      const { target, dataUrl, file } = e;
+      if (!fabricRef.current || !target || !dataUrl) return;
+      
+      try {
+        const img = await FabricImage.fromURL(dataUrl);
+        
+        // Preserve dimensions
+        const targetWidth = target.getScaledWidth();
+        const targetHeight = target.getScaledHeight();
+        
+        img.scaleToWidth(targetWidth);
+        if (img.getScaledHeight() > targetHeight) {
+            img.scaleToHeight(targetHeight);
+        }
+        
+        img.set({ 
+            left: target.left, 
+            top: target.top,
+        });
+        
+        (img as any).isPDFImage = true;
+        (img as any).name = `Replaced: ${file.name}`;
+        
+        fabricRef.current.add(img);
+        fabricRef.current.remove(target);
+        fabricRef.current.setActiveObject(img);
+        fabricRef.current.requestRenderAll();
+        toast.success('Image replaced successfully');
+      } catch (err) {
+        toast.error('Failed to replace image');
+      }
+    });
 
     return () => {
       fabricRef.current?.dispose();
@@ -118,6 +209,87 @@ const PDFEditorTab: React.FC = () => {
     _setPageStates(updated);
   }, [isLoaded]);
 
+  /**
+   * Render a single PDF page onto the Fabric canvas.
+   * The PDF is rendered as a static background image (no masking).
+   * Text items are extracted and placed as editable IText objects on top.
+   */
+  const renderPageToCanvas = async (
+    canvas: Canvas,
+    pdfDoc: any,
+    file: File,
+    pageNum: number
+  ) => {
+    const page = await pdfDoc.getPage(pageNum);
+    const viewport1 = page.getViewport({ scale: 1.0 });
+
+    // Render PDF page as a plain background image (NO masking)
+    const dataUrl = await loadPDFPageAsImage(file, pageNum);
+    const img = await FabricImage.fromURL(dataUrl);
+
+    const canvasWidth = 600;
+    const scale = canvasWidth / img.width!;
+    const canvasHeight = img.height! * scale;
+
+    canvas.setDimensions({ width: canvasWidth, height: canvasHeight });
+    canvas.clear();
+
+    img.set({ scaleX: scale, scaleY: scale, selectable: false, evented: false });
+    canvas.backgroundImage = img;
+
+    // Extract text content for interactive editing
+    const textContent = await page.getTextContent();
+    const pdfToCanvasScale = canvasWidth / viewport1.width;
+
+    const textItems = textContent.items
+      .filter((item: any) => item.str && item.str.trim() && item.transform && item.transform.length >= 6)
+      .map((item: any) => {
+        const transform = item.transform;
+        const fontSize = Math.sqrt(transform[0] * transform[0] + transform[1] * transform[1]);
+        return {
+          str: item.str,
+          x: transform[4],
+          y: transform[5],
+          width: item.width || 0,
+          height: item.height || fontSize,
+          fontSize,
+          fontName: item.fontName,
+        };
+      });
+
+    // Add editable text objects
+    for (const item of textItems) {
+      const text = new IText(item.str, {
+        left: item.x * pdfToCanvasScale,
+        top: (viewport1.height - item.y - item.fontSize) * pdfToCanvasScale,
+        fontSize: item.fontSize * pdfToCanvasScale,
+        fontFamily: 'Inter, sans-serif',
+        fill: '#000000',
+      });
+      canvas.add(text);
+    }
+
+    // Detect potential image placeholders (heuristic: text ending in .jpg)
+    const potentialImages = textItems.filter((t: any) => t.str.toLowerCase().endsWith('.jpg'));
+    for (const item of potentialImages) {
+      const rect = new Rect({
+        left: item.x * pdfToCanvasScale,
+        top: (viewport1.height - item.y - 120) * pdfToCanvasScale,
+        width: 100 * pdfToCanvasScale,
+        height: 120 * pdfToCanvasScale,
+        fill: 'rgba(255,255,255,0.5)',
+        stroke: '#3b82f6',
+        strokeWidth: 1,
+        strokeDashArray: [5, 5],
+      });
+      (rect as any).isPDFImage = true;
+      (rect as any).name = 'Replaceable Image';
+      canvas.add(rect);
+    }
+
+    canvas.requestRenderAll();
+  };
+
   // Load a specific page onto the canvas — uses refs for freshest data
   const loadPageOntoCanvas = useCallback(async (pageNum: number) => {
     if (!fabricRef.current || !pdfFileRef.current) return;
@@ -139,19 +311,12 @@ const PDFEditorTab: React.FC = () => {
         canvas.backgroundImage = img;
         canvas.requestRenderAll();
       } else {
-        const dataUrl = await loadPDFPageAsImage(pdfFileRef.current, pageNum);
-        const img = await FabricImage.fromURL(dataUrl);
-
-        const canvasWidth = 600;
-        const scale = canvasWidth / img.width!;
-        const canvasHeight = img.height! * scale;
-
-        canvas.setDimensions({ width: canvasWidth, height: canvasHeight });
-        canvas.clear();
-
-        img.set({ scaleX: scale, scaleY: scale, selectable: false, evented: false });
-        canvas.backgroundImage = img;
-        canvas.requestRenderAll();
+        // Reuse the cached PDF document or load a fresh one
+        if (!pdfDocRef.current) {
+          const arrayBuffer = await pdfFileRef.current.arrayBuffer();
+          pdfDocRef.current = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        }
+        await renderPageToCanvas(canvas, pdfDocRef.current, pdfFileRef.current, pageNum);
       }
 
       setHistory([]);
@@ -172,7 +337,11 @@ const PDFEditorTab: React.FC = () => {
       pageStatesRef.current = new Map();
       _setPageStates(new Map());
 
-      const numPages = await getPDFPageCount(file);
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+      pdfDocRef.current = pdf;
+
+      const numPages = pdf.numPages;
       setTotalPages(numPages);
       totalPagesRef.current = numPages;
       setCurrentPage(1);
@@ -182,19 +351,8 @@ const PDFEditorTab: React.FC = () => {
       if (!fabricRef.current) return;
 
       suppressSave.current = true;
-      const dataUrl = await loadPDFPageAsImage(file, 1);
-      const img = await FabricImage.fromURL(dataUrl);
 
-      const canvasWidth = 600;
-      const scale = canvasWidth / img.width!;
-      const canvasHeight = img.height! * scale;
-
-      fabricRef.current.setDimensions({ width: canvasWidth, height: canvasHeight });
-      fabricRef.current.clear();
-
-      img.set({ scaleX: scale, scaleY: scale, selectable: false, evented: false });
-      fabricRef.current.backgroundImage = img;
-      fabricRef.current.requestRenderAll();
+      await renderPageToCanvas(fabricRef.current, pdf, file, 1);
 
       setHistory([]);
       setRedoStack([]);
@@ -202,10 +360,10 @@ const PDFEditorTab: React.FC = () => {
       saveState();
 
       toast.success(`PDF loaded — ${numPages} page${numPages > 1 ? 's' : ''}`, { id: 'pdf-load' });
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      console.error('PDF upload error:', error);
       suppressSave.current = false;
-      toast.error('Failed to load PDF', { id: 'pdf-load' });
+      toast.error(`Failed to load PDF: ${error?.message || String(error)}`, { id: 'pdf-load' });
     }
   };
 
@@ -219,22 +377,7 @@ const PDFEditorTab: React.FC = () => {
     setCurrentPage(newPage);
     await loadPageOntoCanvas(newPage);
   };
-
-  // Add text
-  const addText = () => {
-    if (!fabricRef.current) return;
-    const text = new IText('Edit me', {
-      left: 100, top: 100,
-      fontSize: 20, fontFamily: 'Inter, sans-serif', fill: '#000000',
-    });
-    (text as any).name = 'Text';
-    fabricRef.current.add(text);
-    fabricRef.current.setActiveObject(text);
-    fabricRef.current.requestRenderAll();
-  };
-
-  // Add image
-  const addImage = () => {
+  const handleReplaceImage = (targetObj: any) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
@@ -246,46 +389,38 @@ const PDFEditorTab: React.FC = () => {
       reader.onload = async (evt) => {
         const dataUrl = evt.target?.result as string;
         const img = await FabricImage.fromURL(dataUrl);
-        img.scaleToWidth(150);
-        img.set({ left: 100, top: 100 });
-        (img as any).name = `Image: ${file.name}`;
+        
+        // Preserve dimensions
+        const targetWidth = targetObj.getScaledWidth();
+        const targetHeight = targetObj.getScaledHeight();
+        
+        img.scaleToWidth(targetWidth);
+        if (img.getScaledHeight() > targetHeight) {
+            img.scaleToHeight(targetHeight);
+        }
+        
+        img.set({ 
+            left: targetObj.left, 
+            top: targetObj.top,
+        });
+        
+        (img as any).isPDFImage = true;
+        (img as any).name = `Replaced: ${file.name}`;
+        
         fabricRef.current!.add(img);
+        fabricRef.current!.remove(targetObj);
         fabricRef.current!.setActiveObject(img);
         fabricRef.current!.requestRenderAll();
+        toast.success('Image replaced successfully');
       };
       reader.readAsDataURL(file);
     };
     input.click();
   };
 
-  // White-out tool
-  const addWhiteOut = () => {
-    if (!fabricRef.current) return;
-    const rect = new Rect({
-      left: 100, top: 100,
-      width: 150, height: 30,
-      fill: '#ffffff', stroke: '#e2e8f0', strokeWidth: 1,
-    });
-    (rect as any).name = 'White-out';
-    fabricRef.current.add(rect);
-    fabricRef.current.setActiveObject(rect);
-    fabricRef.current.requestRenderAll();
-    toast.info('White-out rectangle added — drag and resize to cover mistakes');
-  };
 
-  // Add shape
-  const addShape = () => {
-    if (!fabricRef.current) return;
-    const rect = new Rect({
-      left: 100, top: 100,
-      width: 120, height: 80,
-      fill: 'rgba(59, 130, 246, 0.15)', stroke: '#3b82f6', strokeWidth: 2, rx: 4, ry: 4,
-    });
-    (rect as any).name = 'Shape';
-    fabricRef.current.add(rect);
-    fabricRef.current.setActiveObject(rect);
-    fabricRef.current.requestRenderAll();
-  };
+
+  const [zoomLevel, setZoomLevel] = useState(1);
 
   // Export corrected PDF
   const handleExport = async () => {
@@ -294,7 +429,12 @@ const PDFEditorTab: React.FC = () => {
     try {
       toast.loading('Generating corrected PDF...', { id: 'export' });
 
-      // Flush current page to ref before exporting
+      // Revert zoom to 1 before capturing export
+      const currentZoom = fabricRef.current.getZoom();
+      const currentW = fabricRef.current.width!;
+      const currentH = fabricRef.current.height!;
+      fabricRef.current.setZoom(1);
+      fabricRef.current.setDimensions({ width: currentW / currentZoom, height: currentH / currentZoom });
       saveCurrentPageState();
 
       const pages: { dataUrl: string; width: number; height: number }[] = [];
@@ -338,6 +478,10 @@ const PDFEditorTab: React.FC = () => {
         }
       }
 
+      // Restore zoom
+      fabricRef.current.setZoom(currentZoom);
+      fabricRef.current.setDimensions({ width: currentW, height: currentH });
+
       const filename = pdfFileRef.current!.name.replace(/\.pdf$/i, '_edited.pdf');
       await exportMultiPagePDF(pages, filename);
       toast.success('PDF downloaded successfully!', { id: 'export' });
@@ -348,14 +492,27 @@ const PDFEditorTab: React.FC = () => {
     }
   };
 
+  const handleZoom = (direction: 'in' | 'out') => {
+    if (!fabricRef.current) return;
+    let newZoom = zoomLevel + (direction === 'in' ? 0.25 : -0.25);
+    newZoom = Math.max(0.25, Math.min(newZoom, 5));
+    setZoomLevel(newZoom);
+    
+    // Scale HTML canvas size for native scrollbars
+    const baseWidth = 600;
+    const baseHeight = (fabricRef.current.backgroundImage as any)?.height * ((fabricRef.current.backgroundImage as any)?.scaleY || 1);
+    
+    fabricRef.current.setZoom(newZoom);
+    fabricRef.current.setDimensions({ 
+      width: baseWidth * newZoom, 
+      height: (baseHeight || fabricRef.current.height!) * newZoom 
+    });
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-220px)] bg-[#f8fafc] rounded-xl border border-slate-200 overflow-hidden">
       <EditorToolbar
         onUploadPDF={handlePDFUpload}
-        onAddText={addText}
-        onAddImage={addImage}
-        onWhiteOut={addWhiteOut}
-        onAddShape={addShape}
         onUndo={handleUndo}
         onRedo={handleRedo}
         onExport={handleExport}
@@ -379,6 +536,21 @@ const PDFEditorTab: React.FC = () => {
           <Card className={`shadow-2xl overflow-hidden bg-white ${!isLoaded ? 'hidden' : ''}`}>
             <canvas id="editor-canvas" ref={canvasRef} />
           </Card>
+
+          {/* Floating Zoom Controls */}
+          {isLoaded && (
+            <div className="absolute bottom-4 right-6 bg-white/90 backdrop-blur-md shadow-lg border border-slate-200 rounded-lg flex items-center p-1 z-50">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-600" onClick={() => handleZoom('out')} disabled={zoomLevel <= 0.25} title="Zoom Out">
+                 <span className="text-lg font-medium leading-none cursor-pointer">-</span>
+              </Button>
+              <div className="w-12 text-center text-[11px] font-bold text-slate-700">
+                {Math.round(zoomLevel * 100)}%
+              </div>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-600" onClick={() => handleZoom('in')} disabled={zoomLevel >= 5} title="Zoom In">
+                 <span className="text-lg font-medium leading-none cursor-pointer">+</span>
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Right panel */}

@@ -92,6 +92,8 @@ export interface Design {
     selected: string | null;
     showBothSides: boolean;
     showGrid?: boolean;
+    defaultFontFamily?: string;
+    defaultColor?: string;
     photoUrl?: string;
     logoUrl?: string;
     front: SideData;
@@ -164,12 +166,14 @@ const defaultDesign: Design = {
   clipType: 'Metal Hook',
   accessories: ['Badge Holder'],
   quantity: 100,
-  idCard: {
+    idCard: {
     size: '54x86',
     activeSide: 'front',
     selected: null,
     showBothSides: false,
     showGrid: false,
+    defaultFontFamily: 'Montserrat',
+    defaultColor: '#1e293b',
     front: {
       backgroundColor: '#ffffff',
       elements: [],
@@ -415,6 +419,21 @@ export const useConfiguratorStore = create<ConfiguratorStore>((set, get) => ({
   },
 
   resetDesign: () => {
+    // 1. Identify current project ID before resetting
+    const currentDesign = get().design;
+    const projectId = currentDesign.idCard.selected;
+    
+    // 2. Clear localStorage permanently
+    try {
+      if (projectId) {
+        window.localStorage.removeItem(`${LOCAL_STORAGE_KEY}-${projectId}`);
+      }
+      window.localStorage.removeItem(LOCAL_STORAGE_KEY);
+    } catch (e) {
+      console.warn("Error clearing localStorage:", e);
+    }
+
+    // 3. Reset in-memory state
     set({
       design: clone(defaultDesign),
       past: [],

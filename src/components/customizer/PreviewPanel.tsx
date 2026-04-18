@@ -196,7 +196,7 @@ export default function PreviewPanel({ stageRef, idCardStageRef, zoom, setZoom, 
                const allEls = [...design.idCard.front.elements, ...design.idCard.back.elements];
                if (allEls.find((el:any) => el.id === hitId)) {
                    // Valid drop!
-                   let newMapping = { ...design.idCard.bulkWorkflow.mapping, [hitId]: colName };
+                   const newMapping = { ...design.idCard.bulkWorkflow.mapping, [hitId]: colName };
                    
                    // Auto-map the rest if this is the first item mapped manually
                    if (Object.keys(design.idCard.bulkWorkflow.mapping).length === 0) {

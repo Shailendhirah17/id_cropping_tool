@@ -282,8 +282,8 @@ function UnifiedStrapContent({ x1, y1, x2, y2, design, logoImg, strapW, forceNoL
   const dx = x2 - x1, dy = y2 - y1;
   const dist = Math.hypot(dx, dy);
   const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-  let mainText = lanyardDesignStyle === 'predefined' ? predefinedWord : (forceNoText ? '' : (copyMode === 'synchronized' ? customTextCenter : (zone === 'left' ? customTextLeft : (zone === 'right' ? customTextRight : customTextCenter))));
-  let subText = lanyardDesignStyle === 'stacked-text' ? customTextSecondary : null;
+  const mainText = lanyardDesignStyle === 'predefined' ? predefinedWord : (forceNoText ? '' : (copyMode === 'synchronized' ? customTextCenter : (zone === 'left' ? customTextLeft : (zone === 'right' ? customTextRight : customTextCenter))));
+  const subText = lanyardDesignStyle === 'stacked-text' ? customTextSecondary : null;
 
   if (!mainText && !logoImg) return null;
 

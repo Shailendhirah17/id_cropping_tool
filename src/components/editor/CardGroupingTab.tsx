@@ -15,22 +15,27 @@ import {
 import { exportCanvasToPDF } from '@/utils/exportPDF';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { PDFDocument } from 'pdf-lib';
+import JSZip from 'jszip';
 
 const CardGroupingTab: React.FC = () => {
   const [files, setFiles] = useState<File[]>([]);
   const [analyses, setAnalyses] = useState<FileAnalysis[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewImages, setPreviewImages] = useState<string[]>([]);
+  const [templateImage, setTemplateImage] = useState<string | null>(null);
+  const [zipBlob, setZipBlob] = useState<Blob | null>(null);
   const [processLog, setProcessLog] = useState<string[]>([]);
-  const [groupingMode, setGroupingMode] = useState<GroupingMode>('single');
 
   const handleFilesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newFiles = Array.from(e.target.files || []);
     if (newFiles.length === 0) return;
     setFiles(prev => [...prev, ...newFiles]);
     setAnalyses([]);
-    setPreviewImage(null);
+    setPreviewImages([]);
+    setTemplateImage(null);
+    setZipBlob(null);
     setProcessLog([]);
     toast.success(`${newFiles.length} file(s) added`);
   };
@@ -38,7 +43,9 @@ const CardGroupingTab: React.FC = () => {
   const removeFile = (index: number) => {
     setFiles(prev => prev.filter((_, i) => i !== index));
     setAnalyses([]);
-    setPreviewImage(null);
+    setPreviewImages([]);
+    setTemplateImage(null);
+    setZipBlob(null);
     setProcessLog([]);
   };
 
@@ -54,6 +61,8 @@ const CardGroupingTab: React.FC = () => {
     const results: FileAnalysis[] = [];
 
     try {
+      let activeTemplate = templateImage;
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         addLog(`📄 Analyzing "${file.name}"...`);
@@ -61,39 +70,26 @@ const CardGroupingTab: React.FC = () => {
         const totalPages = await getPDFPageCount(file);
         addLog(`   → ${totalPages} page(s) found`);
 
-        if (groupingMode === 'double' && totalPages < 2) {
-          addLog(`   ⚠️ Warning: File "${file.name}" has only 1 page but Double-Sided mode is active.`);
+        // Extract the Template Format from the 1st page of the 1st file
+        if (i === 0) {
+          addLog(`   → Extracting Page 1 formatting template...`);
+          activeTemplate = await loadPDFPageAsImage(file, 1);
+          setTemplateImage(activeTemplate);
         }
 
-        // Get the relevant pages for analysis
-        // For Single: Just the last page
-        // For Double: Last page (Fronts) and Second-to-last (Backs) or vice versa?
-        // Let's assume the very last page is the one we analyze for the grid
         const lastPageIdx = totalPages;
         const lastPageImage = await loadPDFPageAsImage(file, lastPageIdx);
         
         addLog(`   → Detecting grid on last page (CR80 Standard)...`);
         const grid = await detectCardGrid(lastPageImage);
-        addLog(`   → Grid: ${grid.rows}×${grid.cols} detected`);
+        addLog(`   → Grid: ${grid.rows}×${grid.cols} detected [Mode: ${grid.mode.toUpperCase()}]`);
 
         addLog(`   → Extracting slots...`);
         const slots = await analyzePageSlots(lastPageImage, grid);
 
-        // If Double Sided, also extract backs from the previous page
-        if (groupingMode === 'double' && totalPages >= 2) {
-          addLog(`   → Extracting Back images from page ${totalPages - 1}...`);
-          const backPageImage = await loadPDFPageAsImage(file, totalPages - 1);
-          const backSlots = await analyzePageSlots(backPageImage, grid);
-          for (let s = 0; s < slots.length; s++) {
-            if (!slots[s].isEmpty && backSlots[s]) {
-              slots[s].backImageDataUrl = backSlots[s].imageDataUrl;
-            }
-          }
-        }
-
         const filledCount = slots.filter(s => !s.isEmpty).length;
         const emptyCount = slots.filter(s => s.isEmpty).length;
-        addLog(`   → ${filledCount} filled slots recorded`);
+        addLog(`   → ${filledCount} valid cards extracted from last page.`);
 
         results.push({
           fileName: file.name,
@@ -109,8 +105,7 @@ const CardGroupingTab: React.FC = () => {
 
       setAnalyses(results);
       addLog('');
-      addLog('✅ Analysis complete!');
-      toast.success('All files analyzed');
+      addLog('✅ Analysis complete! Ready to batch process.');
     } catch (error) {
       console.error(error);
       addLog(`❌ Error: ${(error as Error).message}`);
@@ -118,72 +113,100 @@ const CardGroupingTab: React.FC = () => {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [files, groupingMode]);
+  }, [files]);
 
   const processGrouping = useCallback(async () => {
-    if (analyses.length === 0) return;
+    if (analyses.length === 0 || !templateImage) return;
 
     setIsProcessing(true);
-    setProcessLog(prev => [...prev, '', `🔄 Processing ${groupingMode}-sided grouping...`]);
+    setProcessLog(prev => [...prev, '', `🔄 Starting Batch Consolidation...`]);
+    setZipBlob(null);
 
     try {
-      const primary = analyses[0];
+      const zip = new JSZip();
+      const originalsFolder = zip.folder("Processed_Originals")!;
 
-      // Collect filler cards/sets from other files
+      // 1. Collect ALL filler cards from ALL analyzed files
       const fillerCards: string[] = [];
-      const fillerSets: { front: string; back: string }[] = [];
 
-      for (let i = 1; i < analyses.length; i++) {
+      for (let i = 0; i < analyses.length; i++) {
         const analysis = analyses[i];
-        addLog(`   → Collecting from "${analysis.fileName}"...`);
-
+        
+        // Accumulate the extracted cards from the trailing pages
         for (const slot of analysis.slots) {
           if (!slot.isEmpty && slot.imageDataUrl) {
-            if (groupingMode === 'single') {
-              fillerCards.push(slot.imageDataUrl);
-            } else if (slot.backImageDataUrl) {
-              fillerSets.push({ front: slot.imageDataUrl, back: slot.backImageDataUrl });
-            }
+            fillerCards.push(slot.imageDataUrl);
           }
         }
+
+        // Simultaneously modify the PDF file by stripping the last page
+        addLog(`   → Removing last page from "${analysis.fileName}"...`);
+        const arrayBuffer = await analysis.file.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(arrayBuffer);
+        
+        pdfDoc.removePage(pdfDoc.getPageCount() - 1);
+        
+        const modifiedPdfBytes = await pdfDoc.save();
+        const outputFilename = analysis.fileName.replace(/\.pdf$/i, '_grouped.pdf');
+        originalsFolder.file(outputFilename, modifiedPdfBytes);
       }
 
-      // Fill empty slots on primary with fillers
-      const currentSlots = [...primary.slots];
-      let fillCount = 0;
+      const totalItems = fillerCards.length;
+      addLog(`   → Total cards pooled: ${totalItems}`);
 
-      for (let i = 0; i < currentSlots.length; i++) {
-        if (currentSlots[i].isEmpty) {
-          if (groupingMode === 'single' && fillerCards.length > 0) {
-            const card = fillerCards.shift()!;
-            currentSlots[i] = { ...currentSlots[i], isEmpty: false, imageDataUrl: card };
-            fillCount++;
-          } else if (groupingMode === 'double' && fillerSets.length > 0) {
-            const set = fillerSets.shift()!;
-            currentSlots[i] = { 
-              ...currentSlots[i], 
-              isEmpty: false, 
-              imageDataUrl: set.front, 
-              backImageDataUrl: set.back 
-            };
-            fillCount++;
-          }
+      // 2. Generate required A3 Template batches
+      // We chunk the collected pool into capacities equal to the template's max grid size
+      const primaryGrid = analyses[0].grid!;
+      const maxCapacity = primaryGrid.rows * primaryGrid.cols;
+
+      const generatedA3s: string[] = [];
+      let itemsRemaining = totalItems;
+      let chunkIdx = 0;
+
+      addLog(`   → Template Capacity: ${maxCapacity} per sheet`);
+
+      while (itemsRemaining > 0) {
+        addLog(`   → Compositing Grouped Sheet ${chunkIdx + 1}...`);
+        
+        const chunkCards = fillerCards.slice(chunkIdx * maxCapacity, (chunkIdx + 1) * maxCapacity);
+        itemsRemaining -= chunkCards.length;
+
+        const a3Image = await compositeCardsOntoA3(
+          chunkCards,
+          primaryGrid,
+          templateImage
+        );
+        generatedA3s.push(a3Image);
+        chunkIdx++;
+      }
+
+      setPreviewImages(generatedA3s);
+
+      // 3. Compile the generated A3 sheets into a single PDF
+      if (generatedA3s.length > 0) {
+        addLog(`   → Compiling grouped A3s into PDF...`);
+        const groupedPdfDoc = await PDFDocument.create();
+        for (const imgData of generatedA3s) {
+          const imgBuffer = await fetch(imgData).then(res => res.arrayBuffer());
+          const embedImg = await groupedPdfDoc.embedPng(imgBuffer);
+          const page = groupedPdfDoc.addPage([primaryGrid.pageWidth, primaryGrid.pageHeight]);
+          page.drawImage(embedImg, {
+             x: 0, y: 0,
+             width: primaryGrid.pageWidth,
+             height: primaryGrid.pageHeight
+          });
         }
+        const groupedPdfBytes = await groupedPdfDoc.save();
+        zip.file("Grouped_Output.pdf", groupedPdfBytes);
       }
 
-      addLog(`   → Filled ${fillCount} empty slots with borrowed cards.`);
-      addLog(`   → Compositing A3 sheet (${groupingMode === 'single' ? '5×4' : '5×2 Sets'})...`);
+      addLog(`   → Packaging ZIP Archive...`);
+      const blob = await zip.generateAsync({ type: "blob" });
+      setZipBlob(blob);
 
-      const a3Image = await compositeCardsOntoA3(
-        currentSlots,
-        groupingMode === 'single' ? fillerCards : fillerSets.flatMap(s => [s.front, s.back]),
-        groupingMode
-      );
-
-      setPreviewImage(a3Image);
       addLog('');
-      addLog('✅ Grouping complete! A3 Preview generated.');
-      toast.success('Layout generated successfully');
+      addLog('✅ Batch Grouping complete! ZIP ready for download.');
+      toast.success('Layouts packaged successfully');
     } catch (error) {
       console.error(error);
       addLog(`❌ Error: ${(error as Error).message}`);
@@ -191,17 +214,23 @@ const CardGroupingTab: React.FC = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [analyses, groupingMode]);
+  }, [analyses, templateImage]);
 
-  const downloadA3 = async () => {
-    if (!previewImage) return;
+  const downloadZip = async () => {
+    if (!zipBlob) return;
     try {
-      toast.loading('Exporting A3...', { id: 'a3-export' });
-      await exportCanvasToPDF(previewImage, A3_WIDTH_PT, A3_HEIGHT_PT, `grouped_${groupingMode}_A3.pdf`);
-      toast.success('A3 PDF downloaded!', { id: 'a3-export' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Batch_Grouped_${new Date().getTime()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('ZIP Downloaded!', { id: 'zip-export' });
     } catch (error) {
       console.error(error);
-      toast.error('Export failed', { id: 'a3-export' });
+      toast.error('Download failed', { id: 'zip-export' });
     }
   };
 
@@ -226,38 +255,12 @@ const CardGroupingTab: React.FC = () => {
           </h3>
           
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label className="text-xs font-bold">Grouping Mode</Label>
-                <p className="text-[10px] text-slate-500">
-                  {groupingMode === 'single' ? 'Single Sided (5×4)' : 'Double Sided (5×2 Sets)'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-bold ${groupingMode === 'single' ? 'text-indigo-600' : 'text-slate-400'}`}>SINGLE</span>
-                <Switch 
-                  checked={groupingMode === 'double'} 
-                  onCheckedChange={(checked) => setGroupingMode(checked ? 'double' : 'single')}
-                />
-                <span className={`text-[10px] font-bold ${groupingMode === 'double' ? 'text-indigo-600' : 'text-slate-400'}`}>DOUBLE</span>
-              </div>
-            </div>
-
             <div className="p-3 rounded-lg bg-slate-50 text-[10px] text-slate-600 space-y-1">
-              <p className="font-bold text-slate-800 uppercase tracking-wider mb-1">Sheet Specifications</p>
-              {groupingMode === 'single' ? (
-                <>
-                  <p>• Capacity: 20 Cards per A3</p>
-                  <p>• Grid: 5 Columns × 4 Rows</p>
-                  <p>• Card Size: 54×86mm (Fixed)</p>
-                </>
-              ) : (
-                <>
-                  <p>• Capacity: 10 Sets per A3</p>
-                  <p>• Grid: 5 Columns × 2 Rows of Sets</p>
-                  <p>• Set: Front and Back stacked vertically</p>
-                </>
-              )}
+              <p className="font-bold text-slate-800 uppercase tracking-wider mb-1">Auto-Detected Specifications</p>
+              <p>• Capacity: Extracted dynamically from page grid</p>
+              <p>• Layout Model: Inferred based on vertical spans</p>
+              <p>• Background Data: Maintained strictly from Page 1</p>
+              <p>• Double-Sided Head-To-Head format automatically supported.</p>
             </div>
           </div>
         </Card>
@@ -288,13 +291,13 @@ const CardGroupingTab: React.FC = () => {
           {analyses.length > 0 && (
             <Button onClick={processGrouping} disabled={isProcessing} className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white">
               {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              Process & Generate A3
+              Process & Consolidate Batch
             </Button>
           )}
 
-          {previewImage && (
-            <Button onClick={downloadA3} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-200">
-              <Download size={14} /> Download A3 PDF
+          {zipBlob && (
+            <Button onClick={downloadZip} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-200">
+              <Download size={14} /> Download ZIP Archive
             </Button>
           )}
         </div>
@@ -344,26 +347,30 @@ const CardGroupingTab: React.FC = () => {
         <Card className="p-5 bg-white border-slate-200 flex flex-col items-center">
           <div className="w-full flex items-center justify-between mb-4 border-b pb-3">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <Info size={16} /> A3 Output Preview
+              <Info size={16} /> Print Template Previews
             </h3>
-            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">A3 PORTRAIT • CR80 STANDARD</span>
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Templated Layout</span>
           </div>
 
-          {previewImage ? (
-            <div className="relative group p-1 bg-slate-100 rounded-lg shadow-inner">
-              <img 
-                src={previewImage} 
-                alt="A3 Output" 
-                className="max-w-full max-h-[600px] rounded shadow-2xl border border-white"
-                style={{ aspectRatio: '297 / 420' }}
-              />
-              <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/10 transition-colors pointer-events-none rounded-lg" />
+          {previewImages.length > 0 ? (
+            <div className="w-full flex flex-col items-center gap-4 max-h-[600px] overflow-y-auto p-2">
+              {previewImages.map((imgSrc, idx) => (
+                <div key={idx} className="relative group p-1 bg-slate-100 rounded-lg shadow-inner w-full max-w-[300px]">
+                  <p className="text-center text-xs font-bold text-slate-400 mb-1">Sheet {idx + 1}</p>
+                  <img 
+                    src={imgSrc} 
+                    alt={`A3 Output ${idx+1}`} 
+                    className="w-full rounded shadow-md border border-white"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 top-6 bg-slate-900/0 group-hover:bg-slate-900/10 transition-colors pointer-events-none rounded-lg" />
+                </div>
+              ))}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-300">
               <Grid3x3 size={48} strokeWidth={1} />
-              <p className="mt-4 text-sm font-medium">No preview generated yet</p>
-              <p className="text-[11px] mt-1">Upload primary and filler PDFs to see the result</p>
+              <p className="mt-4 text-sm font-medium">No previews generated</p>
+              <p className="text-[11px] mt-1 text-center max-w-xs">Template layouts will be populated here after processing the batch</p>
             </div>
           )}
         </Card>

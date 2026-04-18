@@ -27,6 +27,10 @@ export interface Project {
     assignedToName?: string;
     color?: string;
     created_at: string;
+    current_stage?: string;
+    completed_stages?: string; // JSON string
+    pdf_url?: string;
+    branch?: string;
 }
 
 export interface RecordIssue {

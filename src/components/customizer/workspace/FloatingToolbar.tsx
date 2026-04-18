@@ -33,7 +33,9 @@ export default function FloatingToolbar({ stageRef }: any) {
             y: stageBox.top + rect.y - 70
           });
         }
-      } catch(e) {}
+      } catch(e) {
+        // ignore
+      }
     };
 
     updatePosition();

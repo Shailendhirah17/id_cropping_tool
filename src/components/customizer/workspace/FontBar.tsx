@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, Type, ChevronDown, X } from 'lucide-react';
+import { Search, Type, ChevronDown, X, CheckCircle2 } from 'lucide-react';
 import { GOOGLE_FONTS, FONT_CATEGORIES, loadGoogleFont, preloadFontBatch, isFontLoaded, FontCategory } from '../../../data/googleFonts';
 import { useConfiguratorStore } from '../../../store/useConfiguratorStore';
+import { toast } from 'sonner';
 
 const VISIBLE_BATCH_SIZE = 40;
 
@@ -79,41 +80,63 @@ export default function FontBar() {
   }, [filtered.length]);
 
   const applyFont = (family: string) => {
-    if (!selectedId) return;
     loadGoogleFont(family);
-    setField(
-      `idCard.${activeSide}.elements`,
-      elements.map((e: any) => e.id === selectedId ? { ...e, fontFamily: family } : e)
+    
+    // 1. Update Global Default
+    setField('idCard.defaultFontFamily', family);
+
+    // 2. Update Selected Element (if any)
+    const newElements = elements.map((e: any) => 
+      e.id === selectedId ? { ...e, fontFamily: family } : e
     );
+    setField(`idCard.${activeSide}.elements`, newElements);
+    
     setIsOpen(false);
   };
 
-  const currentFont = selectedEl?.fontFamily || 'Sans-serif';
+  const applyToAll = () => {
+    const family = selectedEl?.fontFamily || design.idCard.defaultFontFamily || 'Montserrat';
+    loadGoogleFont(family);
+    
+    const newElements = elements.map((e: any) => 
+      e.type === 'text' ? { ...e, fontFamily: family } : e
+    );
+    setField(`idCard.${activeSide}.elements`, newElements);
+    toast.success(`Applied ${family} to all text fields`);
+  };
+
+  const currentFont = isTextSelected ? (selectedEl?.fontFamily || 'Montserrat') : (design.idCard.defaultFontFamily || 'Montserrat');
 
   return (
-    <div ref={dropdownRef} className="relative">
+    <div ref={dropdownRef} className="relative flex items-center gap-1">
       {/* Trigger Button */}
       <button
-        onClick={() => isTextSelected && setIsOpen(!isOpen)}
-        disabled={!isTextSelected}
+        onClick={() => setIsOpen(!isOpen)}
         className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
-          isTextSelected
-            ? isOpen
-              ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200'
-              : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
-            : 'text-slate-300 cursor-not-allowed'
+          isOpen
+            ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200'
+            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
         }`}
-        title={isTextSelected ? 'Change font' : 'Select a text element first'}
+        title="Set Global Font"
       >
         <Type size={14} />
-        <span className="max-w-[120px] truncate" style={{ fontFamily: isTextSelected ? `"${currentFont}", sans-serif` : undefined }}>
+        <span className="max-w-[120px] truncate" style={{ fontFamily: `"${currentFont}", sans-serif` }}>
           {currentFont}
         </span>
         <ChevronDown size={12} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
+      {/* Global Apply Button (Quick Action) */}
+      <button 
+        onClick={applyToAll}
+        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+        title="Apply current font to all text fields"
+      >
+        <CheckCircle2 size={16} />
+      </button>
+
       {/* Dropdown Panel */}
-      {isOpen && isTextSelected && (
+      {isOpen && (
         <div className="absolute top-full left-0 mt-2 w-[380px] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[200] overflow-hidden animate-in zoom-in-95 fade-in duration-200"
           style={{ boxShadow: '0 25px 60px rgba(0,0,0,0.18)' }}
         >

@@ -263,7 +263,7 @@ const renderElementToCanvas = async (
   }
 
   switch (element.type) {
-    case 'text':
+    case 'text': {
       const fontSize = element.fontSize || 16;
       ctx.font = `${element.fontStyle || 'normal'} ${element.fontWeight || 'normal'} ${fontSize}px ${element.fontFamily || 'Arial'}`;
       ctx.fillStyle = element.fill || '#000000';
@@ -279,6 +279,7 @@ const renderElementToCanvas = async (
         ctx.fillText(element.text || '', 0, height / 2);
       }
       break;
+    }
 
     case 'image':
       if (element.src) {
@@ -428,12 +429,13 @@ export const exportTemplate = async (
   options: ExportOptions
 ): Promise<void> => {
   switch (options.format) {
-    case 'json':
+    case 'json': {
       const jsonData = exportToJSON(templateData, options);
       const blob = new Blob([jsonData], { type: 'application/json' });
       const fileName = `${templateData.metadata.name.replace(/\s+/g, '_')}_Template.json`;
       saveAs(blob, fileName);
       break;
+    }
 
     case 'pdf':
       await exportToPDF(templateData, options);

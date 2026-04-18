@@ -9,10 +9,6 @@ import { Separator } from '@/components/ui/separator';
 
 interface EditorToolbarProps {
   onUploadPDF: (file: File) => void;
-  onAddText: () => void;
-  onAddImage: () => void;
-  onWhiteOut: () => void;
-  onAddShape: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onExport: () => void;
@@ -23,8 +19,7 @@ interface EditorToolbarProps {
 }
 
 const EditorToolbar: React.FC<EditorToolbarProps> = ({
-  onUploadPDF, onAddText, onAddImage, onWhiteOut, onAddShape,
-  onUndo, onRedo, onExport, isLoaded, currentPage, totalPages, onPageChange,
+  onUploadPDF, onUndo, onRedo, onExport, isLoaded, currentPage, totalPages, onPageChange,
 }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -47,55 +42,6 @@ const EditorToolbar: React.FC<EditorToolbarProps> = ({
             className="gap-2 border-indigo-200 bg-indigo-50/50 hover:bg-indigo-100/50 text-indigo-700 text-xs h-9"
           >
             <FileUp size={14} /> Upload PDF
-          </Button>
-        </div>
-
-        <Separator orientation="vertical" className="h-6" />
-
-        {/* Editing tools */}
-        <div className="flex items-center gap-1">
-          <Button
-            disabled={!isLoaded}
-            onClick={onAddText}
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-slate-600 text-xs h-8"
-            title="Add editable text"
-          >
-            <Type size={14} /> Text
-          </Button>
-
-          <Button
-            disabled={!isLoaded}
-            onClick={onAddImage}
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-slate-600 text-xs h-8"
-            title="Add image"
-          >
-            <ImageIcon size={14} /> Image
-          </Button>
-
-          <Button
-            disabled={!isLoaded}
-            onClick={onWhiteOut}
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-slate-600 text-xs h-8"
-            title="White-out tool"
-          >
-            <Eraser size={14} /> White-out
-          </Button>
-
-          <Button
-            disabled={!isLoaded}
-            onClick={onAddShape}
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-slate-600 text-xs h-8"
-            title="Add rectangle shape"
-          >
-            <Square size={14} /> Shape
           </Button>
         </div>
       </div>

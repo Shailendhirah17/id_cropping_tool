@@ -67,6 +67,17 @@ export const UploadExcel = ({ embedded = false, onFileChange }: {
   const [photoProcessingProgress, setPhotoProcessingProgress] = useState(0);
   const [photoMatchingEnabled, setPhotoMatchingEnabled] = useState(false);
 
+  // Verification result type for photo-to-excel matching
+  interface VerificationRow {
+    photoName: string;
+    photoId: string; // numbers extracted from photo name
+    matchedName: string; // student name from matched Excel row
+    matched: boolean;
+    photoBlob?: Blob;
+  }
+
+  const [verificationResults, setVerificationResults] = useState<VerificationRow[]>([]);
+
   const requiredFields = ['student_name', 'class'];
   const optionalFields = ['father_name', 'section', 'roll_number', 'student_id', 'date_of_birth', 'address', 'gender', 'phone_number', 'blood_group'];
 
@@ -185,16 +196,6 @@ export const UploadExcel = ({ embedded = false, onFileChange }: {
     }
   };
 
-  // Verification result type for photo-to-excel matching
-  interface VerificationRow {
-    photoName: string;
-    photoId: string; // numbers extracted from photo name
-    matchedName: string; // student name from matched Excel row
-    matched: boolean;
-    photoBlob?: Blob;
-  }
-
-  const [verificationResults, setVerificationResults] = useState<VerificationRow[]>([]);
 
   const triggerPhotoMatching = () => {
     if (processedPhotos.length > 0 && excelData.length > 0) {

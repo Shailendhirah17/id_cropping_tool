@@ -159,12 +159,16 @@ export const IdCardPreview = ({ onSelectElement, onUpdateElement, onDblClickElem
           onMouseDown={(e) => {
             if (isReviewStep) return;
             e.cancelBubble = true;
-            onSelectElement && onSelectElement(null, sideName);
+            if (onSelectElement) {
+              onSelectElement(null, sideName);
+            }
           }}
           onTap={(e) => {
             if (isReviewStep) return;
             e.cancelBubble = true;
-            onSelectElement && onSelectElement(null, sideName);
+            if (onSelectElement) {
+              onSelectElement(null, sideName);
+            }
           }}
         />
         <Group clipFunc={(ctx: any) => {
@@ -205,7 +209,9 @@ export const IdCardPreview = ({ onSelectElement, onUpdateElement, onDblClickElem
       onMouseDown={(e: any) => {
         if (isReviewStep) return;
         if (e.target === e.target.getStage()) {
-          onSelectElement && onSelectElement(null);
+          if (onSelectElement) {
+            onSelectElement(null);
+          }
         }
       }}
     >

@@ -272,13 +272,15 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
         }
 
         try {
-          let sx = sib.x();
-          let sy = sib.y();
-          let sw = sib.width() * sib.scaleX();
-          let sh = sib.height() * sib.scaleY();
+          const sx = sib.x();
+          const sy = sib.y();
+          const sw = sib.width() * sib.scaleX();
+          const sh = sib.height() * sib.scaleY();
           xPoints.push(sx, sx + sw / 2, sx + sw);
           yPoints.push(sy, sy + sh / 2, sy + sh);
-        } catch(err) {}
+        } catch(err) {
+          // ignore
+        }
       });
       
       const nLeft = node.x();
@@ -335,25 +337,31 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
       const node = shapeRef.current;
       const scaleX = node.scaleX();
       const scaleY = node.scaleY();
-      
-      node.scaleX(1);
-      node.scaleY(1);
+      const rotation = node.rotation();
+      const x = node.x();
+      const y = node.y();
 
       if (element.type === 'text') {
+        // For text, we prefer resetting scale to 1 and updating width/fontSize
+        // to maintain crisp typography
+        node.scaleX(1);
+        node.scaleY(1);
         onTransformEnd(element.id, {
-          x: node.x(),
-          y: node.y(),
-          rotation: node.rotation(),
+          x, y, rotation,
           width: Math.max(5, node.width() * scaleX),
-          fontSize: element.fontSize * Math.max(scaleX, scaleY),
+          fontSize: Math.round(element.fontSize * Math.max(scaleX, scaleY)),
+          scaleX: 1,
+          scaleY: 1
         });
       } else {
+        // For images, frames, and shapes, we keep the scale for consistency
+        // especially important for custom drawn frames with clipping paths
         onTransformEnd(element.id, {
-          x: node.x(),
-          y: node.y(),
-          rotation: node.rotation(),
-          width: Math.max(5, node.width() * scaleX),
-          height: Math.max(5, node.height() * scaleY),
+          x, y, rotation,
+          width: node.width(),
+          height: node.height(),
+          scaleX,
+          scaleY
         });
       }
     },
@@ -700,12 +708,16 @@ export default function IdCardPreview({ onSelectElement, onUpdateElement, onDblC
           onMouseDown={(e) => {
             if (isReviewStep) return;
             e.cancelBubble = true;
-            onSelectElement && onSelectElement(null, sideName);
+            if (onSelectElement) {
+              onSelectElement(null, sideName);
+            }
           }}
           onTap={(e) => {
             if (isReviewStep) return;
             e.cancelBubble = true;
-            onSelectElement && onSelectElement(null, sideName);
+            if (onSelectElement) {
+              onSelectElement(null, sideName);
+            }
           }}
         />
         {sideData.backgroundImage && (
@@ -801,7 +813,9 @@ export default function IdCardPreview({ onSelectElement, onUpdateElement, onDblC
       onMouseDown={(e) => {
         if (isReviewStep) return;
         if (e.target === e.target.getStage()) {
-          onSelectElement && onSelectElement(null);
+          if (onSelectElement) {
+            onSelectElement(null);
+          }
         }
       }}
     >

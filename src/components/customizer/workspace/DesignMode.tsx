@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useConfiguratorStore } from '../../../store/useConfiguratorStore';
 import IdCardPreview from '../IdCardPreview';
 import { Layers, Database, Type, Image as ImageIcon, QrCode, Barcode, ChevronRight, Maximize2, Move, Grid3x3, Columns, ImagePlus, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
-import { Stage, Layer, Group } from 'react-konva';
+import { Stage, Layer, Group, Line } from 'react-konva';
 import { getBatchImageKeys, hydrateBatchImageStore } from './SetupMode';
 import FontBar from './FontBar';
 
@@ -84,6 +84,7 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [drawingPoints, setDrawingPoints] = useState<number[]>([]);
 
   const { width, height } = React.useMemo(() => {
     switch (design.idCard.size) {
@@ -151,7 +152,8 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
     if (type === 'text') {
       newElement.width = textWidth;
       newElement.fontSize = 12;
-      newElement.fill = '#1e293b';
+      newElement.fontFamily = design.idCard.defaultFontFamily || 'Montserrat';
+      newElement.fill = design.idCard.defaultColor || '#1e293b';
       newElement.align = 'center';
       newElement.fontStyle = 'bold';
     } else if (type === 'image') {
@@ -201,7 +203,8 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
       width: textWidth,
       content: 'Double click to edit',
       fontSize: 12,
-      fill: '#1e293b',
+      fontFamily: design.idCard.defaultFontFamily || 'Montserrat',
+      fill: design.idCard.defaultColor || '#1e293b',
       align: 'center',
       fontStyle: 'bold',
     };
@@ -223,20 +226,7 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
     transform.invert();
     const relativePos = transform.point(pos);
 
-    const newId = `line-${Date.now()}`;
-    const newElement: any = {
-      id: newId,
-      type: 'line',
-      points: [relativePos.x, relativePos.y],
-      stroke: '#5d5fef',
-      strokeWidth: 2,
-      tension: 0.5,
-      lineCap: 'round',
-      lineJoin: 'round',
-    };
-    
-    setField(`idCard.${activeSide}.elements`, [...elements, newElement]);
-    setField('idCard.selected', newId);
+    setDrawingPoints([relativePos.x, relativePos.y]);
   };
 
   const handleMouseMove = (e: any) => {
@@ -250,49 +240,47 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
     transform.invert();
     const relativePos = transform.point(pos);
 
-    const selectedId = design.idCard.selected;
-    const els = [...elements];
-    const index = els.findIndex(el => el.id === selectedId);
-    if (index === -1 || els[index].type !== 'line') return;
-
-    const lastLine = { ...els[index] };
-    lastLine.points = [...lastLine.points, relativePos.x, relativePos.y];
-    els[index] = lastLine;
-    
-    setField(`idCard.${activeSide}.elements`, els);
+    setDrawingPoints(prev => [...prev, relativePos.x, relativePos.y]);
   };
 
   const handleMouseUp = () => {
+    if (!isDrawing) return;
     setIsDrawing(false);
-    const selectedId = design.idCard.selected;
-    const els = [...elements];
-    const index = els.findIndex(el => el.id === selectedId);
-    if (index === -1 || els[index].type !== 'line') return;
-
-    const line = { ...els[index] };
-    if (line.points.length < 4) {
-      // Remove tiny specks
-      setField(`idCard.${activeSide}.elements`, els.filter(el => el.id !== selectedId));
+    
+    if (drawingPoints.length < 4) {
+      setDrawingPoints([]);
       return;
     }
 
     // Normalize points: make x,y the top-left and shift all points
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let i = 0; i < line.points.length; i += 2) {
-      minX = Math.min(minX, line.points[i]);
-      minY = Math.min(minY, line.points[i+1]);
-      maxX = Math.max(maxX, line.points[i]);
-      maxY = Math.max(maxY, line.points[i+1]);
+    for (let i = 0; i < drawingPoints.length; i += 2) {
+      minX = Math.min(minX, drawingPoints[i]);
+      minY = Math.min(minY, drawingPoints[i+1]);
+      maxX = Math.max(maxX, drawingPoints[i]);
+      maxY = Math.max(maxY, drawingPoints[i+1]);
     }
 
-    line.x = minX;
-    line.y = minY;
-    line.width = maxX - minX;
-    line.height = maxY - minY;
-    line.points = line.points.map((p: number, i: number) => i % 2 === 0 ? p - minX : p - minY);
+    const newId = `line-${Date.now()}`;
+    const line: any = {
+      id: newId,
+      type: 'line',
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      points: drawingPoints.map((p: number, i: number) => i % 2 === 0 ? p - minX : p - minY),
+      stroke: '#5d5fef',
+      strokeWidth: 2,
+      tension: 0.5,
+      lineCap: 'round',
+      lineJoin: 'round',
+      closed: true,
+    };
     
-    els[index] = line;
-    setField(`idCard.${activeSide}.elements`, els);
+    setField(`idCard.${activeSide}.elements`, [...elements, line]);
+    setField('idCard.selected', newId);
+    setDrawingPoints([]);
   };
 
   return (
@@ -491,6 +479,18 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
                   }
                 }}
               />
+              {isDrawing && drawingPoints.length > 2 && (
+                <Line
+                  points={drawingPoints}
+                  stroke="#5d5fef"
+                  strokeWidth={2}
+                  tension={0.5}
+                  lineCap="round"
+                  lineJoin="round"
+                  closed
+                  opacity={0.5}
+                />
+              )}
               </Group>
             </Layer>
           </Stage>

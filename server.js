@@ -6,6 +6,8 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
+import fs from 'fs/promises';
 
 dotenv.config();
 
@@ -59,12 +61,68 @@ async function connectDB() {
     
     // Test connection
     const connection = await pool.getConnection();
-    console.log(`🥭 ✅ Connected to MySQL: ${MYSQL_DATABASE} successfully. System is now using MySQL backend.`);
+    console.log(`🥭 ✅ Connected to MySQL: ${MYSQL_DATABASE} successfully.`);
     connection.release();
+
+    // Ensure schema is up to date
+    await ensureSchema();
   } catch (err) {
-    console.error('❌ CRITICAL: MySQL connection failed! The server requires a live MySQL connection.');
+    console.error('❌ CRITICAL: MySQL connection failed!');
     console.error(err);
-    process.exit(1); // Force crash if DB isn't available
+    process.exit(1);
+  }
+}
+
+async function ensureSchema() {
+  try {
+    console.log('🏗️  Verifying database schema...');
+    
+    // Get the current database name to query INFORMATION_SCHEMA accurately
+    const [dbResult] = await pool.query('SELECT DATABASE() as db');
+    const currentDb = dbResult[0].db;
+    
+    if (!currentDb) {
+      console.error('❌ Could not determine current database name. Schema verification aborted.');
+      return;
+    }
+
+    const columns = [
+      { name: 'current_stage', type: "varchar(50) DEFAULT 'data_collected'" },
+      { name: 'completed_stages', type: "longtext" },
+      { name: 'pdf_url', type: "varchar(500) DEFAULT NULL" },
+      { name: 'assignedTo', type: "varchar(100) DEFAULT NULL" },
+      { name: 'assignedToName', type: "varchar(255) DEFAULT NULL" },
+      { name: 'branch', type: "varchar(255) DEFAULT NULL" }
+    ];
+
+    for (const col of columns) {
+      // Robust check using INFORMATION_SCHEMA which is more reliable than SHOW COLUMNS
+      const [rows] = await pool.query(
+        `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'projects' AND COLUMN_NAME = ?`,
+        [currentDb, col.name]
+      );
+
+      if (rows.length === 0) {
+        console.log(`➕ Adding missing column: ${col.name} to projects table`);
+        try {
+          // Use ALTER TABLE to add the column
+          await pool.query(`ALTER TABLE projects ADD COLUMN ${col.name} ${col.type}`);
+          console.log(`✅ Successfully added ${col.name}`);
+        } catch (alterError) {
+          console.error(`❌ Failed to add column ${col.name}:`, alterError.message);
+        }
+      } else {
+        // console.log(`ℹ️ Column ${col.name} already exists.`);
+      }
+    }
+    
+    // Ensure all existing rows have valid JSON for completed_stages
+    await pool.query(`UPDATE projects SET completed_stages = '[]' WHERE completed_stages IS NULL OR completed_stages = ''`);
+    
+    console.log('✅ Database schema verified and updated.');
+  } catch (error) {
+    console.error('❌ Schema verification failed:', error.message);
   }
 }
 
@@ -84,11 +142,11 @@ app.get('/api/projects', async (req, res) => {
 app.post('/api/projects', async (req, res) => {
   try {
     const id = req.body.id || uuidv4();
-    const { name, organization, status, template, total_records, valid_records, invalid_records, missing_photos, color, created_by } = req.body;
+    const { name, organization, branch, status, template, total_records, valid_records, invalid_records, missing_photos, color, created_by } = req.body;
     
     await pool.query(
-      'INSERT INTO projects (id, name, organization, status, template, total_records, valid_records, invalid_records, missing_photos, color, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
-      [id, name, organization, status, template, total_records || 0, valid_records || 0, invalid_records || 0, missing_photos || 0, color || '#3B82F6', created_by]
+      'INSERT INTO projects (id, name, organization, branch, status, template, total_records, valid_records, invalid_records, missing_photos, color, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
+      [id, name, organization, branch, status, template, total_records || 0, valid_records || 0, invalid_records || 0, missing_photos || 0, color || '#3B82F6', created_by]
     );
     
     const [projects] = await pool.query('SELECT * FROM projects WHERE id = ?', [id]);
@@ -102,17 +160,41 @@ app.post('/api/projects', async (req, res) => {
 app.put('/api/projects/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    const { name, organization, status, template, total_records, valid_records, invalid_records, missing_photos, color, created_by } = req.body;
+    const body = req.body;
+
+    // Only update fields that are actually present in the request body
+    const allowedFields = [
+      'name', 'organization', 'status', 'template', 'total_records',
+      'valid_records', 'invalid_records', 'missing_photos', 'color',
+      'created_by', 'current_stage', 'completed_stages', 'pdf_url',
+      'assignedTo', 'assignedToName', 'branch'
+    ];
+
+    const setClauses = [];
+    const values = [];
+
+    for (const field of allowedFields) {
+      if (body[field] !== undefined) {
+        setClauses.push(`\`${field}\` = ?`);
+        values.push(body[field]);
+      }
+    }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    values.push(id);
+    const sql = `UPDATE projects SET ${setClauses.join(', ')} WHERE id = ?`;
     
-    await pool.query(
-      'UPDATE projects SET name = ?, organization = ?, status = ?, template = ?, total_records = ?, valid_records = ?, invalid_records = ?, missing_photos = ?, color = ?, created_by = ? WHERE id = ?',
-      [name, organization, status, template, total_records, valid_records, invalid_records, missing_photos, color, created_by, id]
-    );
+    await pool.query(sql, values);
     
-    res.json({ success: true });
+    // Return the updated project
+    const [updated] = await pool.query('SELECT * FROM projects WHERE id = ?', [id]);
+    res.json(updated[0] || { success: true });
   } catch (e) {
     console.error('Error in PUT /api/projects:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, message: e.message });
   }
 });
 
@@ -401,11 +483,13 @@ app.put('/api/auth/users/:id', async (req, res) => {
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
     const [projectsResult] = await pool.query('SELECT COUNT(*) as count FROM projects');
+    const [superAdminsResult] = await pool.query("SELECT COUNT(*) as count FROM users WHERE role = 'super-admin'");
     const [subAdminsResult] = await pool.query("SELECT COUNT(*) as count FROM users WHERE role = 'admin'");
     const [usersResult] = await pool.query("SELECT COUNT(*) as count FROM users WHERE role = 'user'");
     
     res.json({
       totalProjects: projectsResult[0].count,
+      totalSuperAdmins: superAdminsResult[0].count,
       totalAdmins: subAdminsResult[0].count,
       totalUsers: usersResult[0].count
     });
@@ -423,6 +507,121 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
     url: `${req.protocol}://${req.get('host')}/uploads/${filename}`,
     path: `uploads/${filename}`
   });
+});
+
+// Specific upload routes that the frontend expects
+app.post('/api/upload/photo', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const filename = req.file.filename;
+  res.json({
+    url: `${req.protocol}://${req.get('host')}/uploads/${filename}`,
+    path: `uploads/${filename}`
+  });
+});
+
+app.post('/api/upload/excel', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const filename = req.file.filename;
+  res.json({
+    url: `${req.protocol}://${req.get('host')}/uploads/${filename}`,
+    path: `uploads/${filename}`
+  });
+});
+
+app.post('/api/upload/zip', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  const filename = req.file.filename;
+  res.json({
+    url: `${req.protocol}://${req.get('host')}/uploads/${filename}`,
+    path: `uploads/${filename}`
+  });
+});
+
+// PDF Watermark Viewer Route
+app.get('/api/projects/:id/view-pdf', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(401).json({ message: 'Authentication token required' });
+    }
+
+    // Identify user and role from token
+    const userId = token.replace('fake-jwt-token-', '');
+    const [users] = await pool.query('SELECT role FROM users WHERE id = ?', [userId]);
+    
+    if (users.length === 0) {
+      console.warn(`⚠️  Unauthorized PDF access attempt. Token: ${token}, Extracted ID: ${userId}`);
+      return res.status(401).json({ message: 'Invalid user or token' });
+    }
+    
+    const role = users[0].role;
+    const isAdminRole = ['admin', 'super-admin', 'ultra-super-admin'].includes(role);
+
+    // Fetch project to get the PDF path
+    const [projects] = await pool.query('SELECT name, pdf_url FROM projects WHERE id = ?', [id]);
+    if (projects.length === 0 || !projects[0].pdf_url) {
+      return res.status(404).json({ message: 'Project or PDF not found' });
+    }
+
+    const project = projects[0];
+    const filename = path.basename(project.pdf_url);
+    const filePath = path.join(__dirname, 'uploads', filename);
+
+    // Check if file exists
+    try {
+      await fs.access(filePath);
+    } catch {
+      console.error(`❌ PDF file not found on disk: ${filePath}`);
+      return res.status(404).json({ message: 'PDF file missing on server' });
+    }
+
+    // Serve clean file for Admins
+    if (isAdminRole) {
+      return res.sendFile(filePath);
+    }
+
+    // Apply Watermark for standard Users
+    const existingPdfBytes = await fs.readFile(filePath);
+    const pdfDoc = await PDFDocument.load(existingPdfBytes);
+    const helveticaFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const pages = pdfDoc.getPages();
+
+    for (const page of pages) {
+      const { width, height } = page.getSize();
+      
+      // Draw repeating watermark pattern
+      const watermarkText = 'GOTEK';
+      const fontSize = 60;
+      const opacity = 0.15;
+      const spacing = 200;
+
+      for (let x = -width; x < width * 2; x += spacing) {
+        for (let y = -height; y < height * 2; y += spacing) {
+          page.drawText(watermarkText, {
+            x: x,
+            y: y,
+            size: fontSize,
+            font: helveticaFont,
+            color: rgb(0.5, 0.5, 0.5),
+            opacity: opacity,
+            rotate: degrees(45),
+          });
+        }
+      }
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${project.name}_GOTEK.pdf"`);
+    res.send(Buffer.from(pdfBytes));
+
+  } catch (error) {
+    console.error('Error serving watermarked PDF:', error);
+    res.status(500).json({ error: 'Failed to process PDF' });
+  }
 });
 
 // SPA fallback - serve index.html for all non-API routes

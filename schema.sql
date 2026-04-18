@@ -23,6 +23,9 @@ CREATE TABLE `projects` (
   `missing_photos` int(11) DEFAULT 0,
   `color` varchar(20) DEFAULT '#3B82F6',
   `created_by` varchar(100) DEFAULT NULL,
+  `current_stage` varchar(50) DEFAULT 'data_collected',
+  `completed_stages` longtext DEFAULT '[]',
+  `pdf_url` varchar(500) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

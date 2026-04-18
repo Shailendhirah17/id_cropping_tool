@@ -6,3 +6,4 @@ bulk-processing-standalone/node_modules
 # .env.local
 *.log
 # .env
+uploads/

@@ -949,8 +949,8 @@ export default function CustomizationPanel({ currentStep, setCurrentStep, onSubm
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
         {((design.idCard.bulkWorkflow.datasetRecords && design.idCard.bulkWorkflow.datasetRecords.length > 0) ? design.idCard.bulkWorkflow.datasetRecords : []).map((rec: any, i: number) => {
           // Find ID field dynamically if possible
-          let idField = rec['ID'] || rec['id'] || rec['employee_id'] || rec['user_id'] || `Record ${i + 1}`;
-          let nameField = rec['Full Name'] || rec['name'] || rec['first_name'] || rec['title'] || `User`;
+          const idField = rec['ID'] || rec['id'] || rec['employee_id'] || rec['user_id'] || `Record ${i + 1}`;
+          const nameField = rec['Full Name'] || rec['name'] || rec['first_name'] || rec['title'] || `User`;
 
           return (
             <div key={i} className="group relative bg-white rounded-2xl border border-gray-100 p-3 hover:border-blue-200 hover:shadow-xl transition-all cursor-pointer">

@@ -20,16 +20,23 @@ const Settings = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
     const [showAddDialog, setShowAddDialog] = useState(false);
-    const isSuperAdmin = user?.role === 'ultra-super-admin';
-    const [newAdmin, setNewAdmin] = useState({ name: '', email: '', password: '', role: 'super-admin', organization: isSuperAdmin ? '' : (user?.organization || 'GOTEK') });
+    const isUltraAdmin = user?.role === 'ultra-super-admin';
+    const isAdmin = user?.role === 'super-admin' || isUltraAdmin;
+    const isSubAdmin = user?.role === 'admin';
+    const canManageAccess = isAdmin || isUltraAdmin;
+    const [newAdmin, setNewAdmin] = useState({ 
+        name: '', 
+        email: '', 
+        password: '', 
+        role: 'admin', 
+        organization: isUltraAdmin ? '' : (user?.organization || 'GOTEK') 
+    });
 
     useEffect(() => {
-        const isSuperAdmin = user?.role === 'ultra-super-admin';
-        const isAdmin = user?.role === 'super-admin';
-        if (isSuperAdmin || isAdmin) {
+        if (isAdmin) {
             fetchAdmins();
         }
-    }, [user]);
+    }, [user, isAdmin]);
 
     const fetchAdmins = async () => {
         setIsLoading(true);
@@ -37,21 +44,30 @@ const Settings = () => {
             const users = await authService.getUsers();
             // Filter users based on current role's permissions
             let allowedRolesToView = ['ultra-super-admin', 'super-admin', 'admin', 'user'];
+            
             if (user?.role === 'super-admin') {
                 allowedRolesToView = ['admin', 'user'];
+            } else if (user?.role === 'admin') {
+                allowedRolesToView = ['user'];
             }
+            
             const filteredUsers = users.filter((u: any) => allowedRolesToView.includes(u.role));
             setAdminUsers(filteredUsers);
         } catch (error) {
             console.error('Failed to fetch admins:', error);
-            // Don't toast on initial load to avoid noise
         } finally {
             setIsLoading(false);
         }
     };
 
     const resetNewAdminForm = () => {
-        setNewAdmin({ name: '', email: '', password: '', role: 'super-admin', organization: isSuperAdmin ? '' : (user?.organization || 'GOTEK') });
+        setNewAdmin({ 
+            name: '', 
+            email: '', 
+            password: '', 
+            role: 'admin', 
+            organization: isUltraAdmin ? '' : (user?.organization || 'GOTEK') 
+        });
     };
 
     const handleCreateAdmin = async (e: React.FormEvent) => {
@@ -100,7 +116,7 @@ const Settings = () => {
 
         setIsUpdatingProfile(true);
         try {
-            await authService.updateProfile(user!._id, { name });
+            await authService.updateProfile(user!.id || user!._id, { name });
             updateUser({ name });
             toast.success("Profile updated successfully!");
         } catch (error: any) {
@@ -121,16 +137,13 @@ const Settings = () => {
         }
 
         try {
-            await authService.updatePassword(user!._id, newPassword);
+            await authService.updatePassword(user!.id || user!._id, newPassword);
             toast.success("Password updated successfully!");
             (e.target as HTMLFormElement).reset();
         } catch (error: any) {
             toast.error(error.response?.data?.message || 'Failed to update password');
         }
     };
-
-    const isAdmin = user?.role === 'super-admin';
-    const canManageAccess = isSuperAdmin || isAdmin;
 
     const getRoleLabel = (role: string) => {
         if (role === 'ultra-super-admin') return 'Ultra Super admin';
@@ -290,7 +303,7 @@ const Settings = () => {
                                                         <SelectValue placeholder="Select role" />
                                                     </SelectTrigger>
                                                     <SelectContent className="rounded-xl">
-                                                        {isSuperAdmin && <SelectItem value="super-admin">Super Admin</SelectItem>}
+                                                        {isUltraAdmin && <SelectItem value="super-admin">Super Admin</SelectItem>}
                                                         <SelectItem value="admin">Admin (Editor)</SelectItem>
                                                         <SelectItem value="user">Standard User</SelectItem>
                                                     </SelectContent>
@@ -298,7 +311,7 @@ const Settings = () => {
                                             </div>
                                             <div className="space-y-1.5">
                                                 <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">Organization</Label>
-                                                {isSuperAdmin ? (
+                                                {isUltraAdmin ? (
                                                     <Input 
                                                         value={newAdmin.organization} 
                                                         onChange={e => setNewAdmin({...newAdmin, organization: e.target.value})} 
@@ -364,7 +377,7 @@ const Settings = () => {
                                         </TableRow>
                                     ) : (
                                         adminUsers.map((admin) => (
-                                            <TableRow key={admin._id} className="border-gray-50 hover:bg-gray-50/50 transition-colors">
+                                            <TableRow key={admin.id || admin._id} className="border-gray-50 hover:bg-gray-50/50 transition-colors">
                                                 <TableCell className="pl-8 py-5">
                                                     <div className="flex flex-col">
                                                         <span className="text-sm font-bold text-gray-900">{admin.name}</span>
@@ -392,16 +405,17 @@ const Settings = () => {
                                                     </div>
                                                 </TableCell>
                                                 <TableCell className="text-right pr-8">
-                                                    {admin._id !== user?._id && admin.role !== 'ultra-super-admin' && (
+                                                    {(isUltraAdmin && admin.role !== 'ultra-super-admin') || 
+                                                     (isAdmin && (admin.role === 'admin' || admin.role === 'user')) ? (
                                                         <Button 
                                                             variant="ghost" 
                                                             size="icon" 
                                                             className="h-8 w-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                                            onClick={() => handleDeleteUser(admin._id, admin.name)}
+                                                            onClick={() => handleDeleteUser(admin.id || admin._id, admin.name)}
                                                         >
                                                             <Trash2 className="w-4 h-4" />
                                                         </Button>
-                                                    )}
+                                                    ) : null}
                                                 </TableCell>
                                             </TableRow>
                                         ))

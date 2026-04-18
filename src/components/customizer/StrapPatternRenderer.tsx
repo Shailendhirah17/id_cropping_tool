@@ -32,9 +32,8 @@ export default function StrapPatternRenderer({ clipPoints, pattern, strapW, opac
   strapW: number;
   opacity?: number;
 }) {
-  if (!pattern || !clipPoints || clipPoints.length < 6) return null;
-
   const bounds = useMemo(() => {
+    if (!clipPoints || clipPoints.length < 6) return { minX: 0, minY: 0, maxX: 0, maxY: 0, w: 0, h: 0 };
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (let i = 0; i < clipPoints.length; i += 2) {
       const x = clipPoints[i], y = clipPoints[i + 1];
@@ -46,9 +45,8 @@ export default function StrapPatternRenderer({ clipPoints, pattern, strapW, opac
     return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
   }, [clipPoints]);
 
-  const colors = pattern.patternColors || ['rgba(255,255,255,0.15)'];
-
   const clipFunc = useMemo(() => {
+    if (!clipPoints || clipPoints.length < 6) return undefined;
     return (ctx: any) => {
       ctx.beginPath();
       ctx.moveTo(clipPoints[0], clipPoints[1]);
@@ -58,6 +56,10 @@ export default function StrapPatternRenderer({ clipPoints, pattern, strapW, opac
       ctx.closePath();
     };
   }, [clipPoints]);
+
+  if (!pattern || !clipPoints || clipPoints.length < 6) return null;
+
+  const colors = pattern.patternColors || ['rgba(255,255,255,0.15)'];
 
   return (
     <Group clipFunc={clipFunc} opacity={opacity} listening={false}>

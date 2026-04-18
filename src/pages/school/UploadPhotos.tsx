@@ -110,6 +110,23 @@ const UploadPhotos = () => {
   const [useCustom, setUseCustom] = useState(false);
   const [unit, setUnit] = useState<"mm" | "inch">("mm");
 
+  // Fetch students for matching
+  useEffect(() => {
+    const fetchStudents = async () => {
+      if (!currentOrder || isOrderLocked) return;
+
+      try {
+        const data = await studentService.getAll(currentOrder.id || currentOrder._id || '');
+        const list = Array.isArray(data) ? data : (data?.students || []);
+        setStudents(list);
+      } catch {
+        // Silent fail - students list will remain empty
+      }
+    };
+
+    fetchStudents();
+  }, [currentOrder, isOrderLocked]);
+
   if (isOrderLocked) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-background to-muted/20">
@@ -129,23 +146,6 @@ const UploadPhotos = () => {
       </div>
     );
   }
-
-  // Fetch students for matching
-  useEffect(() => {
-    const fetchStudents = async () => {
-      if (!currentOrder) return;
-
-      try {
-        const data = await studentService.getAll(currentOrder.id || currentOrder._id || '');
-        const list = Array.isArray(data) ? data : (data?.students || []);
-        setStudents(list);
-      } catch {
-        // Silent fail - students list will remain empty
-      }
-    };
-
-    fetchStudents();
-  }, [currentOrder]);
 
   const getPhotoSize = (): PhotoSize => {
     if (useCustom) {

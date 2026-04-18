@@ -21,6 +21,7 @@ export const A3_HEIGHT_PX = Math.round((420 / 25.4) * DPI); // ~2976px
 export type GroupingMode = 'single' | 'double';
 
 export interface GridInfo {
+  mode: GroupingMode;
   rows: number;
   cols: number;
   cardWidth: number;   
@@ -177,8 +178,15 @@ export const detectCardGrid = async (
   const avgH = cardRowRanges.length > 0 ? (cardRowRanges[0].end - cardRowRanges[0].start) : height / rows;
   
   const isLandscape = avgW > avgH;
-  const cardWidth = isLandscape ? CR80_HEIGHT_PX : CR80_WIDTH_PX;
-  const cardHeight = isLandscape ? CR80_WIDTH_PX : CR80_HEIGHT_PX;
+  let cardWidth = isLandscape ? CR80_HEIGHT_PX : CR80_WIDTH_PX;
+  let cardHeight = isLandscape ? CR80_WIDTH_PX : CR80_HEIGHT_PX;
+  let mode: GroupingMode = 'single';
+
+  // Dynamic Double-Sided Set Detection (5x2 combined)
+  if (cols === 5 && rows <= 2) {
+    mode = 'double';
+    cardHeight = CR80_HEIGHT_PX * 2; // Extract Front and Back head-to-head block
+  }
 
   const offsetX = cardColRanges.length > 0 ? cardColRanges[0].start : 0;
   const offsetY = cardRowRanges.length > 0 ? cardRowRanges[0].start : 0;
@@ -186,7 +194,7 @@ export const detectCardGrid = async (
   const gapX = cols > 1 && vGaps.length > 0 ? Math.round(vGaps.reduce((s, g) => s + (g.end - g.start), 0) / vGaps.length) : 0;
   const gapY = rows > 1 && hGaps.length > 0 ? Math.round(hGaps.reduce((s, g) => s + (g.end - g.start), 0) / hGaps.length) : 0;
 
-  return { rows, cols, cardWidth, cardHeight, offsetX, offsetY, gapX, gapY, pageWidth: width, pageHeight: height };
+  return { mode, rows, cols, cardWidth, cardHeight, offsetX, offsetY, gapX, gapY, pageWidth: width, pageHeight: height };
 };
 
 export const extractCardFromPage = async (
@@ -243,81 +251,44 @@ export const analyzePageSlots = async (
 };
 
 /**
- * Composite cards onto A3 using fixed 5x4 or 5x2(sets) logic.
+ * Composite gathered cards back onto the unified A3 template
  */
 export const compositeCardsOntoA3 = async (
-  slots: SlotInfo[], 
   fillerCards: string[], 
-  mode: GroupingMode = 'single'
+  grid: GridInfo,
+  templateDataUrl: string
 ): Promise<string> => {
   const canvas = document.createElement('canvas');
-  canvas.width = A3_WIDTH_PX;
-  canvas.height = A3_HEIGHT_PX;
-  const ctx = canvas.getContext('2d')!;
+  canvas.width = grid.pageWidth;
+  canvas.height = grid.pageHeight;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
 
+  // 1. Draw a Blank White Background (matching the template's exact physical dimensions)
+  // This physically mirrors the source page without mixing its printed contents into the new file!
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, grid.pageWidth, grid.pageHeight);
 
-  // CR80 Vertical (standard for these grids)
-  const cw = CR80_WIDTH_PX;
-  const ch = CR80_HEIGHT_PX;
-  
-  // Layout Logic
-  const COLS = 5;
-  const ROWS = (mode === 'single') ? 4 : 2; // Rows of cards vs rows of SETS
-  
-  const gapX = 15; // Small gutter
-  const gapY = 25; 
-
-  const totalW = COLS * cw + (COLS - 1) * gapX;
-  const totalH = (mode === 'single') 
-    ? ROWS * ch + (ROWS - 1) * gapY
-    : ROWS * (ch * 2) + (ROWS - 1) * (gapY * 2);
-
-  const startX = (A3_WIDTH_PX - totalW) / 2;
-  const startY = (A3_HEIGHT_PX - totalH) / 2;
+  const cw = grid.cardWidth;
+  const ch = grid.cardHeight;
+  const { rows, cols, offsetX, offsetY, gapX, gapY } = grid;
 
   let fillIdx = 0;
   
-  if (mode === 'single') {
-    // 5x4 Grid
-    for (let r = 0; r < 4; r++) {
-      for (let c = 0; c < 5; c++) {
-        const slotIdx = r * 5 + c;
-        const x = startX + c * (cw + gapX);
-        const y = startY + r * (ch + gapY);
+  // Standard Grid iteration handles BOTH single and double because 
+  // double acts as unified double-tall card slots physically
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (fillIdx >= fillerCards.length) break;
+      const x = offsetX + c * (cw + gapX);
+      const y = offsetY + r * (ch + gapY);
 
-        const slotSrc = slots[slotIdx]?.imageDataUrl;
-        const cardSrc = slotSrc || (fillIdx < fillerCards.length ? fillerCards[fillIdx++] : undefined);
-        if (cardSrc) {
-          const img = await loadImage(cardSrc);
-          ctx.drawImage(img, x, y, cw, ch);
-        }
-      }
-    }
-  } else {
-    // 5x2 Sets Grid (Front above Back)
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < 5; c++) {
-        const setIdx = r * 5 + c;
-        const x = startX + c * (cw + gapX);
-        const yBase = startY + r * (ch * 2 + gapY * 2);
-
-        const slot = slots[setIdx];
-        const front = slot?.imageDataUrl || (fillIdx < fillerCards.length ? fillerCards[fillIdx++] : undefined);
-        const back = slot?.backImageDataUrl || (fillIdx < fillerCards.length ? fillerCards[fillIdx++] : undefined);
-
-        if (front) {
-          const fImg = await loadImage(front);
-          ctx.drawImage(fImg, x, yBase, cw, ch);
-        }
-        if (back) {
-          const bImg = await loadImage(back);
-          ctx.drawImage(bImg, x, yBase + ch, cw, ch);
-        }
+      const cardSrc = fillerCards[fillIdx++];
+      if (cardSrc) {
+        const img = await loadImage(cardSrc);
+        ctx.drawImage(img, x, y, cw, ch);
       }
     }
   }
 
-  return canvas.toDataURL('image/png');
+  return canvas.toDataURL('image/png', 0.9); // using 0.9 compression helps memory
 };
