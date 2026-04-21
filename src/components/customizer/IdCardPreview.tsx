@@ -1,5 +1,6 @@
-import { Group, Rect, Text, Image, Transformer, Circle, RegularPolygon, Line } from 'react-konva';
+import { Group, Rect, Text, Image, Transformer, Circle, RegularPolygon, Line, Shape, Path } from 'react-konva';
 import { useConfiguratorStore } from '../../store/useConfiguratorStore';
+import { AVAILABLE_SHAPES } from '../../data/shapes';
 import { useCanvasImage } from '../../hooks/useCanvasImage';
 import { getBatchImage, batchImageStore } from './workspace/SetupMode';
 import { useRef, useEffect, useState } from 'react';
@@ -157,32 +158,40 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
 
   let imageSrc: string | null = element.src || null;
   
-  if ((element.type === 'image' || element.type === 'frame') && mappedKey && record) {
-    // Strategy 1: Use the global imageMatchColumn to look up the photo
-    if (!imageSrc && imageMatchColumn) {
+  if ((element.type === 'image' || element.type === 'frame' || element.type === 'line') && mappedKey && record) {
+    // Priority: Dynamic lookup from dataset
+    let dynamicSrc: string | null = null;
+
+    // Strategy 1: Use the global imageMatchColumn
+    if (imageMatchColumn) {
       const matchVal = record[imageMatchColumn];
       if (matchVal !== undefined && matchVal !== null) {
         const matchKey = String(matchVal).trim();
-        imageSrc = findImageUrl(matchKey) || null;
+        dynamicSrc = findImageUrl(matchKey) || null;
       }
     }
     
-    // Strategy 2: Use the element's own mapped column value
-    if (!imageSrc) {
+    // Strategy 2: Use the element's own mapped column
+    if (!dynamicSrc) {
       const directVal = record[mappedKey];
       if (directVal !== undefined && directVal !== null) {
         const directKey = String(directVal).trim();
-        imageSrc = findImageUrl(directKey) || null;
+        dynamicSrc = findImageUrl(directKey) || null;
       }
     }
     
     // Strategy 3: Check if the value itself is a URL
-    if (!imageSrc && dynString) {
+    if (!dynamicSrc && dynString) {
       if (dynString.startsWith('http')) {
-        imageSrc = dynString;
+        dynamicSrc = dynString;
       } else {
-        imageSrc = findImageUrl(dynString) || null;
+        dynamicSrc = findImageUrl(dynString) || null;
       }
+    }
+
+    // Only override imageSrc if we actually found something in the dataset
+    if (dynamicSrc) {
+      imageSrc = dynamicSrc;
     }
   } else if (element.type === 'qr' || element.type === 'barcode') {
     imageSrc = generatedSrc;
@@ -425,39 +434,35 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
       };
 
       if (isMask) {
-        let imageProps = {};
+        let patternProps: any = {};
         if (image && image.width && image.height) {
           const iW = image.width;
           const iH = image.height;
           const scale = Math.max(w / iW, h / iH);
-          imageProps = {
-            width: w,
-            height: h,
-            crop: {
+          patternProps = {
+            fillPatternImage: image,
+            fillPatternScale: { x: scale, y: scale },
+            fillPatternOffset: {
               x: (iW - w / scale) / 2,
-              y: (iH - h / scale) / 2,
-              width: w / scale,
-              height: h / scale
-            }
+              y: (iH - h / scale) / 2
+            },
+            fillPatternRepeat: 'no-repeat'
           };
         }
 
         NodeComponent = (
-          <Group {...commonProps}>
-            <Group clipFunc={getLineClip}>
-               <Image image={image} {...imageProps} />
-            </Group>
-            <Line 
-              points={element.points} 
-              stroke={element.stroke || '#5d5fef'} 
-              strokeWidth={element.strokeWidth || 1} 
-              tension={element.tension ?? 0.5} 
-              lineCap="round" 
-              lineJoin="round" 
-              opacity={0.3}
-              closed={element.closed ?? true}
-            />
-          </Group>
+          <Line 
+            {...commonProps}
+            points={element.points} 
+            {...patternProps}
+            stroke={element.stroke || '#5d5fef'} 
+            strokeWidth={isSelected ? (element.strokeWidth || 1) + 1 : (element.strokeWidth || 1)} 
+            strokeScaleEnabled={false}
+            tension={element.tension ?? 0.5} 
+            lineCap="round" 
+            lineJoin="round" 
+            closed={element.closed ?? true}
+          />
         );
       } else {
         NodeComponent = (
@@ -478,163 +483,90 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
     case 'frame': {
       const w = element.width || 100;
       const h = element.height || 100;
-      
-      const getClipFunc = (ctx: any) => {
-        const shape = element.shapeType || 'rect';
-        ctx.beginPath();
-        
-        // Helper for N-sided polygons
-        const poly = (sides: number) => {
-          const r = Math.min(w, h) / 2;
-          for (let i = 0; i < sides; i++) {
-            const angle = (i * 2 * Math.PI) / sides - Math.PI / 2;
-            ctx.lineTo(w/2 + r * Math.cos(angle), h/2 + r * Math.sin(angle));
-          }
-        };
+      const shapeId = element.shapeType || 'rect';
+      const found = AVAILABLE_SHAPES.find(s => s.id === shapeId);
+      const hasImage = !!(imageSrc && imageSrc !== fallbackImage);
 
-        // Helper for stars
-        const star = (pts: number) => {
-          const r = Math.min(w, h) / 2;
-          for (let i = 0; i < pts * 2; i++) {
-            const rad = i % 2 === 0 ? r : r / 2;
-            const angle = (i * Math.PI) / pts - Math.PI / 2;
-            ctx.lineTo(w/2 + rad * Math.cos(angle), h/2 + rad * Math.sin(angle));
-          }
-        };
-
-        if (shape === 'circle') {
-          ctx.arc(w/2, h/2, Math.min(w,h)/2, 0, Math.PI * 2);
-        } else if (shape.startsWith('poly-')) {
-          poly(parseInt(shape.split('-')[1]));
-        } else if (shape.startsWith('star-')) {
-          star(parseInt(shape.split('-')[1]));
-        } else if (shape === 'hexagon') {
-          poly(6);
-        } else if (shape === 'star') {
-          star(5);
-        } else if (shape === 'heart') {
-          const r = Math.min(w, h) / 2;
-          ctx.moveTo(w/2, h/2 + r * 0.7);
-          ctx.bezierCurveTo(w/2 - r, h/2 - r*0.2, w/2 - r*0.5, h/2 - r*1.2, w/2, h/2 - r*0.4);
-          ctx.bezierCurveTo(w/2 + r*0.5, h/2 - r*1.2, w/2 + r, h/2 - r*0.2, w/2, h/2 + r * 0.7);
-        } else if (shape === 'arrow-right') {
-          ctx.moveTo(0, h*0.3); ctx.lineTo(w*0.6, h*0.3); ctx.lineTo(w*0.6, 0); ctx.lineTo(w, h/2); ctx.lineTo(w*0.6, h); ctx.lineTo(w*0.6, h*0.7); ctx.lineTo(0, h*0.7);
-        } else if (shape === 'arrow-left') {
-          ctx.moveTo(w, h*0.3); ctx.lineTo(w*0.4, h*0.3); ctx.lineTo(w*0.4, 0); ctx.lineTo(0, h/2); ctx.lineTo(w*0.4, h); ctx.lineTo(w*0.4, h*0.7); ctx.lineTo(w, h*0.7);
-        } else if (shape === 'arrow-up') {
-          ctx.moveTo(w*0.3, h); ctx.lineTo(w*0.3, h*0.4); ctx.lineTo(0, h*0.4); ctx.lineTo(w/2, 0); ctx.lineTo(w, h*0.4); ctx.lineTo(w*0.7, h*0.4); ctx.lineTo(w*0.7, h);
-        } else if (shape === 'arrow-down') {
-          ctx.moveTo(w*0.3, 0); ctx.lineTo(w*0.3, h*0.6); ctx.lineTo(0, h*0.6); ctx.lineTo(w/2, h); ctx.lineTo(w, h*0.6); ctx.lineTo(w*0.7, h*0.6); ctx.lineTo(w*0.7, 0);
-        } else if (shape === 'pill') {
-          ctx.roundRect(0, 0, w, h, h/2);
-        } else if (shape === 'diamond') {
-          ctx.moveTo(w/2, 0); ctx.lineTo(w, h/2); ctx.lineTo(w/2, h); ctx.lineTo(0, h/2);
-        } else if (shape === 'blob') {
-          const r = Math.min(w, h) / 2;
-          ctx.moveTo(w/2 + r, h/2);
-          ctx.bezierCurveTo(w/2 + r, h/2 + r*0.5, w/2 + r*0.5, h/2 + r, w/2, h/2 + r);
-          ctx.bezierCurveTo(w/2 - r*0.5, h/2 + r, w/2 - r, h/2 + r*0.5, w/2 - r, h/2);
-          ctx.bezierCurveTo(w/2 - r, h/2 - r*0.5, w/2 - r*0.5, h/2 - r, w/2, h/2 - r);
-          ctx.bezierCurveTo(w/2 + r*0.5, h/2 - r, w/2 + r, h/2 - r*0.5, w/2 + r, h/2);
-        } else if (shape === 'shield') {
-          ctx.moveTo(w/2, 0); ctx.lineTo(w, h*0.2); ctx.lineTo(w*0.9, h*0.8); ctx.bezierCurveTo(w*0.9, h, w/2, h, w/2, h); ctx.bezierCurveTo(w/2, h, w*0.1, h, w*0.1, h*0.8); ctx.lineTo(0, h*0.2);
-        } else if (shape === 'cloud') {
-          ctx.moveTo(w*0.2, h*0.7); ctx.bezierCurveTo(0, h*0.7, 0, h*0.3, w*0.2, h*0.4); ctx.bezierCurveTo(w*0.2, 0, w*0.8, 0, w*0.8, h*0.4); ctx.bezierCurveTo(w, h*0.3, w, h*0.7, w*0.8, h*0.7);
-        } else if (shape === 'badge') {
-          const p = 16; const r1 = Math.min(w, h)/2; const r2 = r1 * 0.9;
-          for (let i = 0; i < p * 2; i++) {
-            const r = i % 2 === 0 ? r1 : r2; const a = (i * Math.PI) / p;
-            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
-          }
-        } else if (shape === 'cross') {
-          const s = 0.3;
-          ctx.moveTo(w*s, 0); ctx.lineTo(w*(1-s), 0); ctx.lineTo(w*(1-s), h*s); ctx.lineTo(w, h*s); ctx.lineTo(w, h*(1-s)); ctx.lineTo(w*(1-s), h*(1-s)); ctx.lineTo(w*(1-s), h); ctx.lineTo(w*s, h); ctx.lineTo(w*s, h*(1-s)); ctx.lineTo(0, h*(1-s)); ctx.lineTo(0, h*s); ctx.lineTo(w*s, h*s);
-        } else if (shape === 'parallelogram') {
-          ctx.moveTo(w*0.2, 0); ctx.lineTo(w, 0); ctx.lineTo(w*0.8, h); ctx.lineTo(0, h);
-        } else if (shape === 'trapezoid') {
-          ctx.moveTo(w*0.2, 0); ctx.lineTo(w*0.8, 0); ctx.lineTo(w, h); ctx.lineTo(0, h);
-        } else if (shape.startsWith('chevron-')) {
-          const s = 0.3;
-          if (shape === 'chevron-right') { ctx.moveTo(0,0); ctx.lineTo(w*(1-s), h/2); ctx.lineTo(0,h); ctx.lineTo(w*s, h); ctx.lineTo(w, h/2); ctx.lineTo(w*s, 0); }
-          else if (shape === 'chevron-left') { ctx.moveTo(w,0); ctx.lineTo(w*s, h/2); ctx.lineTo(w,h); ctx.lineTo(w*(1-s), h); ctx.lineTo(0, h/2); ctx.lineTo(w*(1-s), 0); }
-          else if (shape === 'chevron-up') { ctx.moveTo(0,h); ctx.lineTo(w/2, w*s); ctx.lineTo(w,h); ctx.lineTo(w, h*(1-s)); ctx.lineTo(w/2, 0); ctx.lineTo(0, h*(1-s)); }
-          else if (shape === 'chevron-down') { ctx.moveTo(0,0); ctx.lineTo(w/2, h*(1-s)); ctx.lineTo(w,0); ctx.lineTo(w, h*s); ctx.lineTo(w/2, h); ctx.lineTo(0, h*s); }
-        } else if (shape === 'moon') {
-          ctx.arc(w/2, h/2, w*0.4, 0.4, Math.PI * 1.6);
-          ctx.bezierCurveTo(w*0.3, h*0.8, w*0.3, h*0.2, w/2 + w*0.4 * Math.cos(0.4), h/2 + w*0.4 * Math.sin(0.4));
-        } else if (shape === 'sun') {
-          const p = 12; const r1 = w/2; const r2 = w*0.35;
-          for (let i = 0; i < p * 2; i++) {
-            const r = i % 2 === 0 ? r1 : r2; const a = (i * Math.PI) / p;
-            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
-          }
-        } else if (shape === 'tag') {
-          ctx.moveTo(0, 0); ctx.lineTo(w*0.7, 0); ctx.lineTo(w, h/2); ctx.lineTo(w*0.7, h); ctx.lineTo(0, h);
-        } else if (shape === 'flag') {
-          ctx.moveTo(0,0); ctx.lineTo(w, h*0.2); ctx.lineTo(w, h*0.6); ctx.lineTo(0, h*0.4); ctx.lineTo(0, h);
-        } else if (shape === 'marker') {
-          ctx.arc(w/2, h*0.35, w*0.35, 0, Math.PI, true);
-          ctx.lineTo(w/2, h); ctx.closePath();
-        } else if (shape === 'message') {
-          ctx.roundRect(0, 0, w, h*0.8, 10); ctx.moveTo(w*0.2, h*0.8); ctx.lineTo(w*0.1, h); ctx.lineTo(w*0.4, h*0.8);
-        } else if (shape === 'thought') {
-          ctx.ellipse(w/2, h*0.4, w*0.5, h*0.4, 0, 0, Math.PI*2);
-          ctx.moveTo(w*0.2, h*0.8); ctx.ellipse(w*0.2, h*0.8, 5, 5, 0, 0, Math.PI*2);
-          ctx.moveTo(w*0.1, h*0.9); ctx.ellipse(w*0.1, h*0.9, 3, 3, 0, 0, Math.PI*2);
-        } else if (shape === 'quote') {
-          ctx.moveTo(0,0); ctx.lineTo(w, 0); ctx.lineTo(w*0.8, h); ctx.lineTo(0, h); ctx.lineTo(w*0.2, h/2);
-        } else if (shape === 'seal') {
-          const p = 24; const r1 = w/2; const r2 = w*0.45;
-          for (let i = 0; i < p * 2; i++) {
-            const r = i % 2 === 0 ? r1 : r2; const a = (i * Math.PI) / p;
-            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
-          }
-        } else if (shape === 'burst') {
-          const p = 12; 
-          for (let i = 0; i < p * 2; i++) {
-            const r = i % 2 === 0 ? w/2 : w*0.2; const a = (i * Math.PI) / p;
-            ctx.lineTo(w/2 + r * Math.cos(a), h/2 + r * Math.sin(a));
-          }
-        } else if (shape === 'leaf') {
-          ctx.moveTo(w/2, h); ctx.bezierCurveTo(w, h*0.5, w, 0, w/2, 0); ctx.bezierCurveTo(0, 0, 0, h*0.5, w/2, h);
-        } else {
-          const r = element.cornerRadius || 0;
-          ctx.roundRect(0, 0, w, h, r);
+      // If we have a registry shape, use the built-in Konva Path component
+      if (found && found.path) {
+        let patternProps: any = {};
+        if (hasImage && image && image.width && image.height) {
+          const iW = image.width;
+          const iH = image.height;
+          // Scale the image to cover the 100x100 path space
+          const scale = Math.max(100 / iW, 100 / iH);
+          patternProps = {
+            fillPatternImage: image,
+            fillPatternScale: { x: scale, y: scale },
+            fillPatternOffset: {
+              x: (iW - 100 / scale) / 2,
+              y: (iH - 100 / scale) / 2
+            },
+            fillPatternRepeat: 'no-repeat'
+          };
         }
-        ctx.closePath();
-      };
 
-      const hasImage = !!image;
-      const framePlaceholder = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIGZpbGw9IiNGMUY1RjkiLz48cGF0aCBkPSJNNTAgMzVDNDEgMzUgMzQgNDIgMzQgNTFDMzQgNjAgNDEgNjcgNTAgNjdDNTkgNjcgNjYgNjAgNjYgNTFDNjYgNDIgNTkgMzUgNTAgMzVaTTUwIDYyQzQ0IDYyIDM5IDU3IDM5IDUxQzM5IDQ1IDQ0IDQwIDUwIDQwQzU2IDQwIDYxIDQ1IDYxIDUxQzYxIDU3IDU2IDYyIDUwIDYyWiIgZmlsbD0iI0QxRDVREIi8+PC9zdmc+';
-      
-      let imageProps = {};
-      if (image && image.width && image.height) {
-        const iW = image.width;
-        const iH = image.height;
-        const fW = w;
-        const fH = h;
-        const scale = Math.max(fW / iW, fH / iH);
-        imageProps = {
-          width: fW,
-          height: fH,
-          crop: {
-            x: (iW - fW / scale) / 2,
-            y: (iH - fH / scale) / 2,
-            width: fW / scale,
-            height: fH / scale
+        NodeComponent = (
+          <Path
+            {...commonProps}
+            data={found.path}
+            scaleX={w / 100}
+            scaleY={h / 100}
+            {...patternProps}
+            fill={!hasImage ? (element.fill || '#f1f5f9') : undefined}
+            stroke={element.stroke || (isSelected ? '#5d5fef' : '#e2e8f0')}
+            strokeWidth={(isSelected ? (element.strokeWidth || 1) + 1 : (element.strokeWidth || 1)) * (100 / w)}
+            strokeScaleEnabled={false}
+          />
+        );
+      } else {
+        // Fallback for legacy circle or basic rect
+        const getClipFunc = (ctx: any) => {
+          ctx.beginPath();
+          if (shapeId === 'circle') {
+            ctx.arc(w/2, h/2, Math.min(w,h)/2, 0, Math.PI * 2);
+          } else {
+            const r = element.cornerRadius || 0;
+            ctx.roundRect(0, 0, w, h, r);
           }
+          ctx.closePath();
         };
-      }
 
-      NodeComponent = (
-        <Group {...commonProps}>
-          {/* Background/Stroke of the frame */}
-          <Rect width={w} height={h} fill="#f1f5f9" stroke={element.stroke || '#e2e8f0'} strokeWidth={element.strokeWidth || 1} cornerRadius={element.cornerRadius || 0} opacity={hasImage ? 0.2 : 1} />
-          <Group clipFunc={getClipFunc}>
-             <Image image={image} {...imageProps} />
-          </Group>
-        </Group>
-      );
+        let patternProps: any = {};
+        if (hasImage && image && image.width && image.height) {
+          const iW = image.width;
+          const iH = image.height;
+          const scale = Math.max(w / iW, h / iH);
+          patternProps = {
+            fillPatternImage: image,
+            fillPatternScale: { x: scale, y: scale },
+            fillPatternOffset: {
+              x: (iW - w / scale) / 2,
+              y: (iH - h / scale) / 2
+            },
+            fillPatternRepeat: 'no-repeat'
+          };
+        }
+
+        NodeComponent = (
+          <Shape
+            {...commonProps}
+            sceneFunc={(ctx, shape) => {
+              getClipFunc(ctx);
+              if (!hasImage) {
+                ctx.fillStrokeShape(shape);
+              } else {
+                ctx.fillShape(shape);
+              }
+            }}
+            {...patternProps}
+            fill={!hasImage ? (element.fill || '#f1f5f9') : undefined}
+            stroke={element.stroke || (isSelected ? '#5d5fef' : '#e2e8f0')}
+            strokeWidth={isSelected ? (element.strokeWidth || 1) + 1 : (element.strokeWidth || 1)}
+            strokeScaleEnabled={false}
+          />
+        );
+      }
       break;
     }
   }

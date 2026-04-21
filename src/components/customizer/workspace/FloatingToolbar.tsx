@@ -11,6 +11,22 @@ export default function FloatingToolbar({ stageRef }: any) {
   const elements = design.idCard[activeSide].elements;
   const mapping = design.idCard.bulkWorkflow.mapping;
   const el = elements.find((e: any) => e.id === selectedId);
+  
+  // Local states for numeric inputs to allow "erasing fully and typing"
+  const [fontSizeInput, setFontSizeInput] = useState("");
+  const [widthInput, setWidthInput] = useState("");
+  const [sizeInput, setSizeInput] = useState("");
+  const [strokeWidthInput, setStrokeWidthInput] = useState("");
+
+  useEffect(() => {
+    if (el) {
+      setFontSizeInput((el.fontSize || 12).toString());
+      setWidthInput((el.width || 100).toString());
+      setSizeInput((el.width || 50).toString());
+      setStrokeWidthInput((el.strokeWidth || 2).toString());
+    }
+  }, [selectedId, el?.id]);
+
 
   const [position, setPosition] = useState<{ x: number, y: number } | null>(null);
 
@@ -81,9 +97,14 @@ export default function FloatingToolbar({ stageRef }: any) {
           <label className="flex flex-col items-center">
             <span className="text-[8px] font-bold text-slate-400">Size</span>
             <input 
-              type="number" 
-              value={Math.round(el.fontSize || 12)} 
-              onChange={(e) => updateEl({ fontSize: Number(e.target.value) })}
+              type="text" 
+              value={fontSizeInput} 
+              onChange={(e) => {
+                setFontSizeInput(e.target.value);
+                const val = parseInt(e.target.value);
+                if (!isNaN(val) && val > 0) updateEl({ fontSize: val });
+              }}
+              onBlur={() => setFontSizeInput((el.fontSize || 12).toString())}
               className="w-10 h-7 bg-slate-50 border border-slate-200 rounded-lg text-center text-xs font-bold"
             />
           </label>
@@ -105,9 +126,14 @@ export default function FloatingToolbar({ stageRef }: any) {
           <label className="flex flex-col items-center">
             <span className="text-[8px] font-bold text-slate-400">Width</span>
             <input 
-              type="number" 
-              value={Math.round(el.width || 100)} 
-              onChange={(e) => updateEl({ width: Math.max(20, Number(e.target.value)) })}
+              type="text" 
+              value={widthInput} 
+              onChange={(e) => {
+                setWidthInput(e.target.value);
+                const val = parseInt(e.target.value);
+                if (!isNaN(val) && val >= 5) updateEl({ width: val });
+              }}
+              onBlur={() => setWidthInput((el.width || 100).toString())}
               className="w-12 h-7 bg-slate-50 border border-slate-200 rounded-lg text-center text-xs font-bold"
             />
           </label>
@@ -136,7 +162,17 @@ export default function FloatingToolbar({ stageRef }: any) {
            {(el.type !== 'line') && (
              <label className="flex flex-col">
                <span className="text-[9px] font-bold text-slate-400 mb-0.5">SIZE (px)</span>
-               <input type="number" value={Math.round(el.width || 50)} onChange={(e) => updateEl({ width: Number(e.target.value), height: (el.type === 'frame' ? Number(e.target.value) : Number(e.target.value)) })} className="w-12 h-6 text-xs bg-slate-50 border rounded text-center"/>
+                <input 
+                  type="text" 
+                  value={sizeInput} 
+                  onChange={(e) => {
+                    setSizeInput(e.target.value);
+                    const val = parseInt(e.target.value);
+                    if (!isNaN(val) && val > 0) updateEl({ width: val, height: val });
+                  }}
+                  onBlur={() => setSizeInput((el.width || 50).toString())}
+                  className="w-12 h-6 text-xs bg-slate-50 border rounded text-center"
+                />
              </label>
            )}
            
@@ -144,7 +180,17 @@ export default function FloatingToolbar({ stageRef }: any) {
              <>
                <label className="flex flex-col">
                  <span className="text-[9px] font-bold text-slate-400 mb-0.5">WIDTH</span>
-                 <input type="number" value={el.strokeWidth || 2} onChange={(e) => updateEl({ strokeWidth: Number(e.target.value) })} className="w-10 h-6 text-xs bg-slate-50 border rounded text-center"/>
+                  <input 
+                    type="text" 
+                    value={strokeWidthInput} 
+                    onChange={(e) => {
+                      setStrokeWidthInput(e.target.value);
+                      const val = parseInt(e.target.value);
+                      if (!isNaN(val) && val >= 0) updateEl({ strokeWidth: val });
+                    }}
+                    onBlur={() => setStrokeWidthInput((el.strokeWidth || 2).toString())}
+                    className="w-10 h-6 text-xs bg-slate-50 border rounded text-center"
+                  />
                </label>
                <label className="flex flex-col">
                  <span className="text-[9px] font-bold text-slate-400 mb-0.5">COLOR</span>

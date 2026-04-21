@@ -14,6 +14,8 @@ import JSZip from 'jszip';
 import '@/utils/pdfHandler';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PhotoMatch } from "@/types/validation";
+import { Slider } from "@/components/ui/slider";
+import { cn } from "@/lib/utils";
 import BeforeAfterSlider from "@/components/ui/BeforeAfterSlider";
 
 const ALLOWED_EXTENSIONS = ['jpeg', 'jpg', 'png', 'webp', 'svg', 'pdf'];
@@ -89,6 +91,63 @@ export interface PhotoProcessorProps {
   onPhotosProcessed?: (matches: PhotoMatch[]) => void;
   onComplete?: () => void;
 }
+
+interface SliderWithValueProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (val: number) => void;
+  colorClass?: string;
+  suffix?: string;
+  labelIcon?: React.ReactNode;
+}
+
+const SliderWithValue = ({ label, value, min, max, onChange, colorClass, suffix = "%", labelIcon }: SliderWithValueProps) => {
+  const [localValue, setLocalValue] = useState(value.toString());
+
+  useEffect(() => {
+    setLocalValue(value.toString());
+  }, [value]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalValue(e.target.value);
+    const num = parseInt(e.target.value);
+    if (!isNaN(num)) {
+      onChange(Math.max(min, Math.min(max, num)));
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-between items-center text-[10px] uppercase font-bold">
+        <div className="flex items-center gap-1">
+          <span className={colorClass || "text-gray-400"}>{label}</span>
+          {labelIcon}
+        </div>
+        <div className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded px-1.5 py-0.5 focus-within:ring-1 focus-within:ring-primary/30 transition-all">
+          <input
+            type="number"
+            value={localValue}
+            onChange={handleInputChange}
+            className="w-8 bg-transparent text-right outline-none text-[10px] font-bold text-gray-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            min={min}
+            max={max}
+          />
+          <span className="text-[10px] text-gray-400">{suffix}</span>
+        </div>
+      </div>
+      <Slider 
+        min={min} 
+        max={max} 
+        step={1} 
+        value={[value]} 
+        onValueChange={(val) => onChange(val[0])}
+        className={cn("[&_[data-slot=slider-range]]:bg-primary", colorClass && `[&_[data-slot=slider-range]]:bg-current ${colorClass}`)}
+      />
+    </div>
+  );
+};
 
 export default function PhotoProcessor({
   students,
@@ -206,7 +265,9 @@ export default function PhotoProcessor({
             brightness: 100,
             contrast: 100,
             enhance: 100,
-            temperature: -25
+            temperature: -25,
+            originalUrl: URL.createObjectURL(file), // Cache original
+            processedUrl: URL.createObjectURL(resultBlob) // Cache processed
           };
           const matchResult = matchPhotoToStudent(file.name);
           if (matchResult) {
@@ -402,6 +463,11 @@ export default function PhotoProcessor({
   };
 
   const handleClearPhotos = () => {
+    // Revoke all cached URLs to avoid memory leaks
+    photoMatches.forEach(p => {
+      if (p.originalUrl) URL.revokeObjectURL(p.originalUrl);
+      if (p.processedUrl) URL.revokeObjectURL(p.processedUrl);
+    });
     setPhotoMatches([]);
     setPendingFiles([]);
     setFileStatuses([]);
@@ -447,7 +513,11 @@ export default function PhotoProcessor({
 
       // Update the photo with upscaled version
       const updated = [...photoMatches];
+      // Revoke old processed URL before creating new one
+      if (updated[index].processedUrl) URL.revokeObjectURL(updated[index].processedUrl!);
+      
       updated[index].processedBlob = upscaledBlob;
+      updated[index].processedUrl = URL.createObjectURL(upscaledBlob);
       setPhotoMatches(updated);
       
       URL.revokeObjectURL(imageUrl);
@@ -458,6 +528,12 @@ export default function PhotoProcessor({
     } finally {
       setIsUpscaling(false);
     }
+  };
+  
+  const handleSliderChange = (index: number, key: keyof PhotoMatch, val: number) => {
+    const updated = [...photoMatches];
+    (updated[index] as any)[key] = val;
+    setPhotoMatches(updated);
   };
 
   const displayW = (s: PhotoSize) => unit === "mm" ? `${s.widthMm}mm` : `${s.widthInch}"`;
@@ -558,9 +634,8 @@ export default function PhotoProcessor({
            <CardContent className="p-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                 {photoMatches.map((p, i) => {
-                  // Only create Object URLs once or safely
-                  const originalUrl = URL.createObjectURL(p.originalFile);
-                  const processedUrl = URL.createObjectURL(p.processedBlob);
+                  const originalUrl = p.originalUrl || URL.createObjectURL(p.originalFile);
+                  const processedUrl = p.processedUrl || URL.createObjectURL(p.processedBlob);
                   return (
                     <div key={i} className="bg-white border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                        <div className="aspect-[4/3] relative">
@@ -594,64 +669,56 @@ export default function PhotoProcessor({
                        </div>
 
                        {/* Manual Colour Constraints */}
-                       <div className="px-3 pt-3 pb-1 bg-white border-t space-y-3">
-                           <div className="flex items-center gap-2">
-                               <span className="text-[10px] uppercase font-bold text-gray-400 w-16">Bright</span>
-                               <input 
-                                 type="range" min="0" max="200" value={p.brightness || 100} 
-                                 onChange={(e) => {
-                                    const updated = [...photoMatches];
-                                    updated[i].brightness = parseInt(e.target.value);
-                                    setPhotoMatches(updated);
-                                 }}
-                                 className="flex-1 h-1 bg-gray-200 rounded-full appearance-none cursor-pointer"
-                               />
-                               <span className="text-[10px] text-gray-500 w-6 text-right">{p.brightness || 100}%</span>
-                           </div>
-                           <div className="flex items-center gap-2">
-                               <span className="text-[10px] uppercase font-bold text-gray-400 w-16">Contrast</span>
-                               <input 
-                                 type="range" min="0" max="200" value={p.contrast || 100} 
-                                 onChange={(e) => {
-                                    const updated = [...photoMatches];
-                                    updated[i].contrast = parseInt(e.target.value);
-                                    setPhotoMatches(updated);
-                                 }}
-                                 className="flex-1 h-1 bg-gray-200 rounded-full appearance-none cursor-pointer"
-                               />
-                               <span className="text-[10px] text-gray-500 w-6 text-right">{p.contrast || 100}%</span>
-                           </div>
-                           <div className="flex items-center gap-2 pb-2">
-                               <span className="text-[10px] text-blue-600 w-6 text-right font-bold">{p.enhance || 100}%</span>
-                           </div>
-                           <div className="flex items-center gap-2 pb-2">
-                               <div className="flex items-center gap-1 w-16">
-                                  <span className="text-[10px] uppercase font-bold text-amber-600">Temp</span>
-                                  <button 
-                                    onClick={(e) => { 
-                                      e.stopPropagation(); 
-                                      if (activeEyedropperIndex === i) setActiveEyedropperIndex(null);
-                                      else {
-                                        setActiveEyedropperIndex(i);
-                                        toast.info("Click the yellow spot on the photo to neutralize balance");
-                                      }
-                                    }} 
-                                    className={`p-0.5 rounded transition-colors ${activeEyedropperIndex === i ? 'bg-amber-500 text-white shadow-sm' : 'hover:bg-amber-50 text-amber-500'}`}
-                                  >
-                                     <Pipette size={10} />
-                                  </button>
-                               </div>
-                               <input 
-                                 type="range" min="-100" max="100" value={p.temperature || 0} 
-                                 onChange={(e) => {
-                                    const updated = [...photoMatches];
-                                    updated[i].temperature = parseInt(e.target.value);
-                                    setPhotoMatches(updated);
-                                 }}
-                                 className="flex-1 h-1 bg-amber-100 rounded-full appearance-none cursor-pointer accent-amber-600"
-                               />
-                               <span className="text-[10px] text-amber-600 w-6 text-right font-bold">{p.temperature || 0}</span>
-                           </div>
+                       <div className="px-4 pt-4 pb-2 bg-white border-t space-y-5">
+                           <SliderWithValue 
+                             label="Brightness"
+                             value={p.brightness || 100}
+                             min={0}
+                             max={200}
+                             onChange={(val) => handleSliderChange(i, 'brightness', val)}
+                           />
+
+                           <SliderWithValue 
+                             label="Contrast"
+                             value={p.contrast || 100}
+                             min={0}
+                             max={200}
+                             onChange={(val) => handleSliderChange(i, 'contrast', val)}
+                           />
+
+                           <SliderWithValue 
+                             label="Saturation"
+                             value={p.enhance || 100}
+                             min={0}
+                             max={200}
+                             onChange={(val) => handleSliderChange(i, 'enhance', val)}
+                             colorClass="text-blue-600"
+                           />
+
+                           <SliderWithValue 
+                             label="Temp"
+                             value={p.temperature || 0}
+                             min={-100}
+                             max={100}
+                             onChange={(val) => handleSliderChange(i, 'temperature', val)}
+                             colorClass="text-amber-600"
+                             suffix=""
+                             labelIcon={
+                               <button 
+                                 onClick={(e) => { 
+                                   e.stopPropagation(); 
+                                   if (activeEyedropperIndex === i) setActiveEyedropperIndex(null);
+                                   else {
+                                     setActiveEyedropperIndex(i);
+                                     toast.info("Click the yellow spot on the photo to neutralize balance");
+                                   }
+                                 }} 
+                                 className={`p-0.5 rounded transition-colors ${activeEyedropperIndex === i ? 'bg-amber-500 text-white shadow-sm' : 'hover:bg-amber-50 text-amber-500'}`}
+                               >
+                                  <Pipette size={10} />
+                               </button>
+                             }
+                           />
                        </div>
                        
                        <div className="p-3 bg-gray-50 border-t">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, Type, ChevronDown, X, CheckCircle2 } from 'lucide-react';
+import { Search, Type, ChevronDown, X, CheckCircle2, Bold, Italic, Plus, Minus } from 'lucide-react';
 import { GOOGLE_FONTS, FONT_CATEGORIES, loadGoogleFont, preloadFontBatch, isFontLoaded, FontCategory } from '../../../data/googleFonts';
 import { useConfiguratorStore } from '../../../store/useConfiguratorStore';
 import { toast } from 'sonner';
@@ -106,6 +106,63 @@ export default function FontBar() {
   };
 
   const currentFont = isTextSelected ? (selectedEl?.fontFamily || 'Montserrat') : (design.idCard.defaultFontFamily || 'Montserrat');
+  const size = isTextSelected ? (selectedEl?.fontSize || 14) : (design.idCard.defaultFontSize || 14);
+  const isBold = isTextSelected ? selectedEl?.fontStyle?.includes('bold') : design.idCard.defaultBold;
+  const isItalic = isTextSelected ? selectedEl?.fontStyle?.includes('italic') : design.idCard.defaultItalic;
+
+  const applySize = (size: number) => {
+    const newSize = Math.max(1, Math.min(200, size));
+    setField('idCard.defaultFontSize', newSize);
+    if (selectedId && isTextSelected) {
+      setField(`idCard.${activeSide}.elements`, elements.map((e: any) => 
+        e.id === selectedId ? { ...e, fontSize: newSize } : e
+      ));
+    }
+  };
+
+  const toggleStyle = (style: 'bold' | 'italic') => {
+    const isBoldStyle = style === 'bold';
+    const currentVal = isBoldStyle ? (selectedId && isTextSelected ? selectedEl.fontStyle?.includes('bold') : design.idCard.defaultBold)
+                             : (selectedId && isTextSelected ? selectedEl.fontStyle?.includes('italic') : design.idCard.defaultItalic);
+    
+    const newVal = !currentVal;
+    
+    // Update Default
+    if (isBoldStyle) setField('idCard.defaultBold', newVal);
+    else setField('idCard.defaultItalic', newVal);
+
+    // Update Selected
+    if (selectedId && isTextSelected) {
+      const currentStyle = selectedEl.fontStyle || '';
+      let nextStyle = currentStyle;
+
+      if (isBoldStyle) {
+        if (newVal && !currentStyle.includes('bold')) nextStyle = (currentStyle + ' bold').trim();
+        else if (!newVal) nextStyle = currentStyle.replace('bold', '').trim();
+      } else {
+        if (newVal && !currentStyle.includes('italic')) nextStyle = (currentStyle + ' italic').trim();
+        else if (!newVal) nextStyle = currentStyle.replace('italic', '').trim();
+      }
+
+      setField(`idCard.${activeSide}.elements`, elements.map((e: any) => 
+        e.id === selectedId ? { ...e, fontStyle: nextStyle } : e
+      ));
+    }
+  };
+
+  const [inputValue, setInputValue] = useState(size.toString());
+
+  useEffect(() => {
+    setInputValue(size.toString());
+  }, [size]);
+
+  const handleInputChange = (val: string) => {
+    setInputValue(val);
+    const parsed = parseInt(val);
+    if (!isNaN(parsed) && parsed > 0) {
+      applySize(parsed);
+    }
+  };
 
   return (
     <div ref={dropdownRef} className="relative flex items-center gap-1">
@@ -134,6 +191,55 @@ export default function FontBar() {
       >
         <CheckCircle2 size={16} />
       </button>
+
+      {/* Font Size Controls */}
+      <div className="flex items-center gap-0.5 px-1.5 py-0.5 bg-slate-50 rounded-lg border border-slate-200 ml-1">
+        <button 
+          onClick={() => applySize(size - 1)}
+          className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 rounded-md transition-all"
+        >
+          <Minus size={12} />
+        </button>
+        <input 
+          type="text"
+          value={inputValue}
+          onChange={(e) => handleInputChange(e.target.value)}
+          onBlur={() => setInputValue(size.toString())}
+          className="w-8 text-[10px] font-black bg-transparent text-center focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <button 
+          onClick={() => applySize(size + 1)}
+          className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 rounded-md transition-all"
+        >
+          <Plus size={12} />
+        </button>
+      </div>
+
+      {/* Style Toggles */}
+      <div className="flex items-center gap-0.5 ml-1">
+        <button 
+          onClick={() => toggleStyle('bold')}
+          className={`p-1.5 rounded-lg transition-all border ${
+            isBold 
+              ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm' 
+              : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'
+          }`}
+          title="Bold"
+        >
+          <Bold size={14} strokeWidth={3} />
+        </button>
+        <button 
+          onClick={() => toggleStyle('italic')}
+          className={`p-1.5 rounded-lg transition-all border ${
+            isItalic 
+              ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm' 
+              : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'
+          }`}
+          title="Italic"
+        >
+          <Italic size={14} strokeWidth={3} />
+        </button>
+      </div>
 
       {/* Dropdown Panel */}
       {isOpen && (

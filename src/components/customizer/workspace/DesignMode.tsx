@@ -1,65 +1,12 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useConfiguratorStore } from '../../../store/useConfiguratorStore';
 import IdCardPreview from '../IdCardPreview';
-import { Layers, Database, Type, Image as ImageIcon, QrCode, Barcode, ChevronRight, Maximize2, Move, Grid3x3, Columns, ImagePlus, ZoomIn, ZoomOut, RotateCcw, Minus, Pencil, Activity } from 'lucide-react';
+import { Layers, Database, Type, Image as ImageIcon, QrCode, Barcode, ChevronRight, Maximize2, Move, Grid3x3, Columns, ImagePlus, ZoomIn, ZoomOut, RotateCcw, Minus, Pencil, Activity, PenTool } from 'lucide-react';
 import { Stage, Layer, Group, Line } from 'react-konva';
 import { getBatchImageKeys, hydrateBatchImageStore } from './SetupMode';
+import { AVAILABLE_SHAPES, SHAPE_CATEGORIES, ShapeCategory } from '../../../data/shapes';
 import FontBar from './FontBar';
-
-const AVAILABLE_FRAMES = [
-  { id: 'rect', label: 'Square', icon: '■' },
-  { id: 'circle', label: 'Circle', icon: '●' },
-  { id: 'hexagon', label: 'Hexagon', icon: '⬢' },
-  { id: 'star', label: 'Star', icon: '★' },
-  { id: 'blob', label: 'Liquid', icon: '☁' },
-  { id: 'heart', label: 'Heart', icon: '♥' },
-  { id: 'diamond', label: 'Diamond', icon: '◆' },
-  { id: 'pill', label: 'Pill', icon: '▬' },
-  { id: 'shield', label: 'Shield', icon: '🛡️' },
-  { id: 'cloud', label: 'Cloud', icon: '☁️' },
-  { id: 'badge', label: 'Badge', icon: '🔆' },
-  { id: 'cross', label: 'Cross', icon: '✚' },
-  { id: 'arrow-right', label: 'Arw R', icon: '➜' },
-  { id: 'arrow-left', label: 'Arw L', icon: '⬅' },
-  { id: 'arrow-up', label: 'Arw U', icon: '⬆' },
-  { id: 'arrow-down', label: 'Arw D', icon: '⬇' },
-  { id: 'poly-3', label: 'Tri', icon: '▲' },
-  { id: 'poly-5', label: 'Pent', icon: '⬠' },
-  { id: 'poly-7', label: 'Hept', icon: '⬡' },
-  { id: 'poly-8', label: 'Oct', icon: 'meta' },
-  { id: 'star-3', label: 'Star3', icon: '▲' },
-  { id: 'star-4', label: 'Star4', icon: '✦' },
-  { id: 'star-6', label: 'Star6', icon: '✶' },
-  { id: 'star-8', label: 'Star8', icon: '✴' },
-  { id: 'star-12', label: 'Star12', icon: '❂' },
-  // Adding more to reach 50...
-  { id: 'poly-4', label: 'Rect', icon: '▭' },
-  { id: 'poly-9', label: 'Non', icon: '⬡' },
-  { id: 'poly-10', label: 'Dec', icon: '⬡' },
-  { id: 'star-5', label: 'Star5', icon: '★' },
-  { id: 'star-7', label: 'Star7', icon: '✴' },
-  { id: 'star-9', label: 'Star9', icon: '✵' },
-  { id: 'star-10', label: 'Star10', icon: '✺' },
-  { id: 'star-11', label: 'Star11', icon: '🌟' },
-  { id: 'chevron-right', label: 'Chv R', icon: '❯' },
-  { id: 'chevron-left', label: 'Chv L', icon: '❮' },
-  { id: 'chevron-up', label: 'Chv U', icon: '︿' },
-  { id: 'chevron-down', label: 'Chv D', icon: '﹀' },
-  { id: 'moon', label: 'Moon', icon: '🌙' },
-  { id: 'sun', label: 'Sun', icon: '☀️' },
-  { id: 'tag', label: 'Tag', icon: '🏷️' },
-  { id: 'flag', label: 'Flag', icon: '🚩' },
-  { id: 'marker', label: 'Pin', icon: '📍' },
-  { id: 'message', label: 'Chat', icon: '💬' },
-  { id: 'thought', label: 'Think', icon: '💭' },
-  { id: 'quote', label: 'Quote', icon: '＂' },
-  { id: 'seal', label: 'Seal', icon: '💮' },
-  { id: 'poly-6', label: 'Hexagon', icon: '⬢' },
-  { id: 'poly-11', label: 'Hend', icon: '⬡' },
-  { id: 'poly-12', label: 'Dod', icon: '⬡' },
-  { id: 'burst-1', label: 'Burst1', icon: '💥' },
-  { id: 'leaf-1', label: 'Leaf1', icon: '🍃' },
-];
+import { Search as SearchIcon } from 'lucide-react';
 
 export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: any) {
   const design = useConfiguratorStore(state => state.design);
@@ -69,6 +16,8 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
   const elements = design.idCard[activeSide].elements;
 
   const [activeTab, setActiveTab] = useState<'headers' | 'layers' | 'frames'>('headers');
+  const [shapeSearch, setShapeSearch] = useState('');
+  const [shapeCategory, setShapeCategory] = useState<ShapeCategory | 'All'>('All');
 
   // Hydrate batchImageStore from Zustand on mount (ensures photos survive mode transitions & HMR)
   useEffect(() => {
@@ -153,11 +102,15 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
 
     if (type === 'text') {
       newElement.width = textWidth;
-      newElement.fontSize = 12;
+      newElement.fontSize = design.idCard.defaultFontSize || 12;
       newElement.fontFamily = design.idCard.defaultFontFamily || 'Montserrat';
       newElement.fill = design.idCard.defaultColor || '#1e293b';
       newElement.align = 'center';
-      newElement.fontStyle = 'bold';
+      
+      const styleArr = [];
+      if (design.idCard.defaultBold) styleArr.push('bold');
+      if (design.idCard.defaultItalic) styleArr.push('italic');
+      newElement.fontStyle = styleArr.join(' ') || 'normal';
     } else if (type === 'image') {
       // Larger default for photo elements so they're visible
       newElement.width = isPhotoCol ? 80 : 60;
@@ -210,11 +163,16 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
       y: height / 2 - 10,
       width: textWidth,
       content: 'Double click to edit',
-      fontSize: 12,
+      fontSize: design.idCard.defaultFontSize || 12,
       fontFamily: design.idCard.defaultFontFamily || 'Montserrat',
       fill: design.idCard.defaultColor || '#1e293b',
       align: 'center',
-      fontStyle: 'bold',
+      fontStyle: (() => {
+        const styleArr = [];
+        if (design.idCard.defaultBold) styleArr.push('bold');
+        if (design.idCard.defaultItalic) styleArr.push('italic');
+        return styleArr.join(' ') || 'normal';
+      })(),
     };
     setField(`idCard.${activeSide}.elements`, [...elements, newElement]);
     setField('idCard.selected', newId);
@@ -261,10 +219,10 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
       points: cleanedPoints.map((p: number, i: number) => i % 2 === 0 ? p - minX : p - minY),
       stroke: '#5d5fef',
       strokeWidth: 2,
-      tension: drawingTool === 'freeform' ? 0.5 : 0,
       lineCap: 'round',
       lineJoin: 'round',
-      closed: false, // Always open based on user feedback
+      closed: drawingTool === 'custom_frame' || drawingTool === 'freeform_frame',
+      tension: (drawingTool === 'freeform' || drawingTool === 'freeform_frame') ? 0.5 : 0,
     };
     
     setField(`idCard.${activeSide}.elements`, [...elements, line]);
@@ -283,9 +241,12 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
     const transform = group.getAbsoluteTransform().copy().invert();
     const relativePos = transform.point(pos);
 
-    if (drawingTool === 'multipoint') {
+    if (drawingTool === 'multipoint' || drawingTool === 'custom_frame') {
       setIsDrawing(true);
       setDrawingPoints(prev => [...prev, relativePos.x, relativePos.y]);
+    } else if (drawingTool === 'freeform' || drawingTool === 'freeform_frame') {
+      setIsDrawing(true);
+      setDrawingPoints([relativePos.x, relativePos.y]);
     } else {
       setIsDrawing(true);
       setDrawingPoints([relativePos.x, relativePos.y, relativePos.x, relativePos.y]);
@@ -314,10 +275,10 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
     } else if (drawingTool === '2point') {
       // Free angle for "2point" line
       setDrawingPoints([drawingPoints[0], drawingPoints[1], relativePos.x, relativePos.y]);
-    } else if (drawingTool === 'freeform') {
+    } else if (drawingTool === 'freeform' || drawingTool === 'freeform_frame') {
       setDrawingPoints(prev => [...prev, relativePos.x, relativePos.y]);
-    } else if (drawingTool === 'multipoint') {
-      // preview segment for multipoint
+    } else if (drawingTool === 'multipoint' || drawingTool === 'custom_frame') {
+      // preview segment for multipoint and custom_frame
       const pts = [...drawingPoints];
       if (pts.length >= 2) {
         setMultiPointSegments([pts[pts.length - 2], pts[pts.length - 1], relativePos.x, relativePos.y]);
@@ -328,7 +289,7 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
   const handleMouseUp = (e: any) => {
     if (!isDrawing) return;
     
-    if (drawingTool === 'straight' || drawingTool === '2point' || drawingTool === 'freeform') {
+    if (drawingTool === 'straight' || drawingTool === '2point' || drawingTool === 'freeform' || drawingTool === 'freeform_frame') {
       setIsDrawing(false);
       finalizeLine(drawingPoints);
       setField('idCard.drawingTool', 'none');
@@ -338,7 +299,7 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
   // Keyboard support for finishing multi-point line
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (drawingTool === 'multipoint' && isDrawing && e.key === 'Enter') {
+      if ((drawingTool === 'multipoint' || drawingTool === 'custom_frame') && isDrawing && e.key === 'Enter') {
         setIsDrawing(false);
         finalizeLine(drawingPoints);
         setMultiPointSegments([]);
@@ -350,13 +311,22 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
   }, [drawingTool, isDrawing, drawingPoints]);
 
   const handleDblClick = () => {
-    if (drawingTool === 'multipoint' && isDrawing) {
+    if ((drawingTool === 'multipoint' || drawingTool === 'custom_frame') && isDrawing) {
       setIsDrawing(false);
       finalizeLine(drawingPoints);
       setMultiPointSegments([]);
       setField('idCard.drawingTool', 'none');
     }
   };
+
+  // Deep Fix: Cleanup drawing state when exiting mode
+  useEffect(() => {
+    if (drawingTool === 'none') {
+      setIsDrawing(false);
+      setDrawingPoints([]);
+      setMultiPointSegments([]);
+    }
+  }, [drawingTool]);
 
   return (
     <div className="flex h-full bg-slate-100 overflow-hidden">
@@ -393,58 +363,108 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
           )}
           
           {activeTab === 'frames' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] font-black uppercase text-slate-400">Drawing Tools</div>
-                {isDrawingMode && (
-                  <button 
-                    onClick={() => setField('idCard.drawingTool', 'none')}
-                    className="px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-bold hover:bg-red-100 transition-all"
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-              <div className="grid grid-cols-4 gap-2 mb-4">
-                {[
-                  { id: 'straight', label: 'Straight', icon: Minus },
-                  { id: '2point', label: '2-Point', icon: Maximize2 },
-                  { id: 'multipoint', label: 'Multi', icon: Activity },
-                  { id: 'freeform', label: 'Free', icon: Pencil },
-                ].map((tool) => (
+            <div className="flex flex-col h-full overflow-hidden">
+              <div className="space-y-4 shrink-0 px-1">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] font-black uppercase text-slate-400">Drawing Tools</div>
+                  {isDrawingMode && (
+                    <button 
+                      onClick={() => setField('idCard.drawingTool', 'none')}
+                      className="px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-bold hover:bg-red-100 transition-all"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-4 gap-2 mb-2">
+                  {[
+                    { id: 'straight', label: 'Line', icon: Minus },
+                    { id: '2point', label: 'Vector', icon: Maximize2 },
+                    { id: 'multipoint', label: 'Multi', icon: Activity },
+                    { id: 'freeform', label: 'Free', icon: Pencil },
+                  ].map((tool) => (
+                    <button
+                      key={tool.id}
+                      onClick={() => setField('idCard.drawingTool', drawingTool === tool.id ? 'none' : tool.id)}
+                      className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${drawingTool === tool.id ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600'}`}
+                      title={tool.label}
+                    >
+                      <tool.icon size={16} />
+                      <span className="text-[8px] font-bold mt-1 uppercase">{tool.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-[11px] font-black uppercase text-slate-400">Custom Frame</div>
                   <button
-                    key={tool.id}
-                    onClick={() => setField('idCard.drawingTool', drawingTool === tool.id ? 'none' : tool.id)}
-                    className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${drawingTool === tool.id ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600'}`}
-                    title={tool.label}
+                    onClick={() => setField('idCard.drawingTool', drawingTool === 'freeform_frame' ? 'none' : 'freeform_frame')}
+                    className={`w-full flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed transition-all ${drawingTool === 'freeform_frame' ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg' : 'bg-white border-indigo-200 text-indigo-600 hover:bg-indigo-50 hover:border-indigo-400 shadow-sm'}`}
                   >
-                    <tool.icon size={16} />
-                    <span className="text-[8px] font-bold mt-1 uppercase">{tool.label}</span>
+                    <PenTool size={18} />
+                    <span className="text-xs font-black uppercase tracking-wider">Draw Custom Mask</span>
                   </button>
-                ))}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="relative">
+                    <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Search 500+ shapes..." 
+                      value={shapeSearch}
+                      onChange={(e) => setShapeSearch(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-400 focus:bg-white transition-all shadow-inner"
+                    />
+                  </div>
+
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none no-scrollbar">
+                    <button 
+                      onClick={() => setShapeCategory('All')}
+                      className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${shapeCategory === 'All' ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                    >
+                      All
+                    </button>
+                    {SHAPE_CATEGORIES.map(cat => (
+                      <button 
+                        key={cat}
+                        onClick={() => setShapeCategory(cat)}
+                        className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-bold transition-all ${shapeCategory === cat ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="text-[11px] font-black uppercase text-slate-400 mb-2">Image Frames (Masks)</div>
-              <div className="grid grid-cols-4 gap-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200">
-                {AVAILABLE_FRAMES.map((frame) => (
-                  <button
-                    key={frame.id}
-                    onClick={() => {
-                        setField('idCard.drawingTool', 'none');
-                        addFrame(frame.id);
-                    }}
-                    className="flex flex-col items-center justify-center p-2 bg-slate-50 border border-slate-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-200 hover:shadow-sm transition-all group aspect-square"
-                    title={frame.label}
-                  >
-                    <span className="text-xl text-slate-400 group-hover:text-indigo-400 mb-1 transition-colors">{frame.icon}</span>
-                    <span className="text-[8px] font-bold text-slate-400 group-hover:text-indigo-600 truncate w-full text-center px-0.5">{frame.label}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100">
-                <p className="text-[10px] text-indigo-600 font-medium leading-relaxed">
-                  <strong>Pro Tip:</strong> Select a frame, then drag an image into it. Or use <strong>"Draw"</strong> to create a custom mask!
-                </p>
+              <div className="flex-1 overflow-y-auto mt-4 pr-1 scrollbar-thin scrollbar-thumb-slate-200">
+                <div className="grid grid-cols-4 gap-2 auto-rows-fr pb-10">
+                  {AVAILABLE_SHAPES
+                    .filter(s => {
+                      const matchesSearch = s.name.toLowerCase().includes(shapeSearch.toLowerCase());
+                      const matchesCategory = shapeCategory === 'All' || s.category === shapeCategory;
+                      return matchesSearch && matchesCategory;
+                    })
+                    .map((frame) => (
+                      <button
+                        key={frame.id}
+                        onClick={() => {
+                            setField('idCard.drawingTool', 'none');
+                            addFrame(frame.id);
+                        }}
+                        className="flex flex-col items-center justify-center p-2 bg-white border border-slate-100 rounded-xl hover:border-indigo-400 hover:shadow-md transition-all group aspect-square active:scale-95"
+                        title={frame.name}
+                      >
+                        <div className="w-full aspect-square flex items-center justify-center text-slate-300 group-hover:text-indigo-500 transition-colors">
+                          <svg viewBox="0 0 100 100" className="w-full h-full p-1 fill-current overflow-visible">
+                            <path d={frame.path} />
+                          </svg>
+                        </div>
+                        <span className="text-[7px] font-black text-slate-400 group-hover:text-indigo-700 truncate w-full text-center mt-1 uppercase tracking-tighter">{frame.name}</span>
+                      </button>
+                    ))}
+                </div>
               </div>
             </div>
           )}
@@ -455,14 +475,38 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
                  <button onClick={() => setField('idCard.activeSide', 'front')} className={`text-[11px] font-bold ${activeSide === 'front' ? 'text-indigo-600' : 'text-slate-400'}`}>FRTSIDE</button>
                  <button onClick={() => setField('idCard.activeSide', 'back')} className={`text-[11px] font-bold ${activeSide === 'back' ? 'text-indigo-600' : 'text-slate-400'}`}>BAKSIDE</button>
                </div>
-               {[...elements].reverse().map((el, i) => (
-                 <div key={el.id} onClick={() => setField('idCard.selected', el.id)} className={`p-2 rounded-lg flex items-center justify-between cursor-pointer border ${design.idCard.selected === el.id ? 'border-indigo-400 bg-indigo-50/50' : 'border-transparent hover:bg-slate-50'}`}>
-                   <div className="flex items-center gap-2">
-                     {el.type === 'text' ? <Type size={14} className="text-slate-400"/> : el.type === 'qr' ? <QrCode size={14} className="text-slate-400"/> : <ImageIcon size={14} className="text-slate-400"/>}
-                     <span className="text-xs font-medium text-slate-700 truncate w-32">{mapping[el.id] || el.type}</span>
+               {[...elements].reverse().map((el, i) => {
+                 const isSelected = design.idCard.selected === el.id;
+                 let typeIcon = <ImageIcon size={14} className="text-slate-400"/>;
+                 let typeLabel = mapping[el.id] || el.type;
+
+                 if (el.type === 'text') {
+                   typeIcon = <Type size={14} className="text-slate-400"/>;
+                 } else if (el.type === 'qr') {
+                   typeIcon = <QrCode size={14} className="text-slate-400"/>;
+                 } else if (el.type === 'barcode') {
+                   typeIcon = <Barcode size={14} className="text-slate-400"/>;
+                 } else if (el.type === 'line') {
+                   typeIcon = <Activity size={14} className="text-slate-400"/>;
+                   typeLabel = el.closed ? "Custom Frame" : "Custom Line";
+                 } else if (el.type === 'frame') {
+                   typeIcon = <PenTool size={14} className="text-slate-400"/>;
+                   typeLabel = `Frame (${el.shapeType || 'Custom'})`;
+                 }
+
+                 return (
+                   <div 
+                    key={el.id} 
+                    onClick={() => setField('idCard.selected', el.id)} 
+                    className={`p-2 rounded-lg flex items-center justify-between cursor-pointer border ${isSelected ? 'border-indigo-400 bg-indigo-50/50' : 'border-transparent hover:bg-slate-50'}`}
+                   >
+                     <div className="flex items-center gap-2">
+                       {typeIcon}
+                       <span className="text-xs font-bold text-slate-700 truncate w-32 uppercase tracking-tighter">{typeLabel}</span>
+                     </div>
                    </div>
-                 </div>
-               ))}
+                 );
+               })}
             </div>
           )}
         </div>
@@ -582,10 +626,10 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
                   points={drawingPoints}
                   stroke="#5d5fef"
                   strokeWidth={2}
-                  tension={drawingTool === 'freeform' ? 0.5 : 0}
+                  tension={(drawingTool === 'freeform' || drawingTool === 'freeform_frame') ? 0.5 : 0}
                   lineCap="round"
                   lineJoin="round"
-                  closed={false}
+                  closed={drawingTool === 'custom_frame' || drawingTool === 'freeform_frame'} 
                   opacity={0.5}
                 />
               )}

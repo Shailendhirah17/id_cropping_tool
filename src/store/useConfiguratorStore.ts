@@ -23,6 +23,7 @@ export interface Element {
   fontSize?: number;
   align?: 'left' | 'center' | 'right';
   fontStyle?: string;
+  fontFamily?: string;
   lineHeight?: number;
   letterSpacing?: number;
   src?: string;
@@ -31,6 +32,7 @@ export interface Element {
   shapeType?: string;
   lineCap?: string;
   lineJoin?: string;
+  closed?: boolean;
   _debugLogged?: string | null;
 }
 
@@ -96,7 +98,10 @@ export interface Design {
     defaultColor?: string;
     photoUrl?: string;
     logoUrl?: string;
-    drawingTool: 'none' | 'straight' | '2point' | 'multipoint' | 'freeform';
+    defaultFontSize: number;
+    defaultBold: boolean;
+    defaultItalic: boolean;
+    drawingTool: 'none' | 'straight' | '2point' | 'multipoint' | 'freeform' | 'custom_frame' | 'freeform_frame';
     front: SideData;
     back: SideData;
     bulkWorkflow: {
@@ -175,6 +180,9 @@ const defaultDesign: Design = {
     showGrid: false,
     defaultFontFamily: 'Montserrat',
     defaultColor: '#1e293b',
+    defaultFontSize: 14,
+    defaultBold: false,
+    defaultItalic: false,
     drawingTool: 'none',
     front: {
       backgroundColor: '#ffffff',

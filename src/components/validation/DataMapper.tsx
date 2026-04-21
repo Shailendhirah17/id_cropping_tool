@@ -268,7 +268,9 @@ export default function DataMapper({
                     filename: filename.split('/').pop() || filename,
                     processedBlob: blob,
                     matched: false,
-                    originalFile: new File([blob], filename)
+                    originalFile: new File([blob], filename),
+                    processedUrl: URL.createObjectURL(blob),
+                    originalUrl: URL.createObjectURL(blob) // Since it's from ZIP, original and processed start same
                 });
             }
         }
@@ -404,6 +406,11 @@ export default function DataMapper({
   };
 
   const handleClearData = () => {
+    // Revoke all cached URLs to avoid memory leaks
+    photoMatches.forEach(p => {
+      if (p.originalUrl) URL.revokeObjectURL(p.originalUrl);
+      if (p.processedUrl) URL.revokeObjectURL(p.processedUrl);
+    });
     setFile(null);
     setExcelData?.([]);
     setRawHeaders?.([]);
@@ -544,7 +551,7 @@ export default function DataMapper({
                            <div className="text-[9px] font-bold text-gray-500 truncate flex-1 uppercase tracking-tighter" title={p.filename}>{p.filename}</div>
                         </div>
                         <div className="relative aspect-square rounded-lg overflow-hidden border border-gray-100 bg-gray-50">
-                           <img src={URL.createObjectURL(p.processedBlob)} className="w-full h-full object-cover" />
+                           <img src={p.processedUrl || URL.createObjectURL(p.processedBlob)} className="w-full h-full object-cover" />
                            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
                         </div>
                      </div>

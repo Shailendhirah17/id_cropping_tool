@@ -9,4 +9,7 @@ export interface PhotoMatch {
   contrast?: number;
   enhance?: number;
   temperature?: number;
+  // Performance and memory leak fixes
+  originalUrl?: string;
+  processedUrl?: string;
 }
