@@ -314,7 +314,7 @@ const Projects = () => {
                                                                 {project.branch}
                                                             </span>
                                                         )}
-                                                        {project.assignedToName && (
+                                                        {project.assignedToName && !isUser && (
                                                             <span className="text-[10px] px-2 py-0.5 bg-purple-50 text-purple-600 border border-purple-100 rounded-full font-bold flex items-center gap-1">
                                                                 <Shield className="w-3 h-3" /> Assigned To: {project.assignedToName}
                                                             </span>

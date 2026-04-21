@@ -202,15 +202,48 @@ app.delete('/api/projects/:id', async (req, res) => {
   try {
     const id = req.params.id;
     
-    // Delete associated records first
+    // 1. Fetch project info to get pdf_url
+    const [projects] = await pool.query('SELECT pdf_url FROM projects WHERE id = ?', [id]);
+    
+    // 2. Fetch record photo URLs
+    const [records] = await pool.query('SELECT photo_url FROM records WHERE project_id = ?', [id]);
+
+    // 3. Construct list of files to delete
+    const filesToDelete = [];
+    if (projects.length > 0 && projects[0].pdf_url) {
+      filesToDelete.push(projects[0].pdf_url);
+    }
+    records.forEach(r => {
+      if (r.photo_url) filesToDelete.push(r.photo_url);
+    });
+
+    // 4. Delete files from disk
+    for (const url of filesToDelete) {
+      try {
+        // Extract filename from URL/path
+        const filename = path.basename(url);
+        const filePath = path.join(__dirname, 'uploads', filename);
+        
+        await fs.unlink(filePath);
+        console.log(`🗑️  Successfully deleted file: ${filename}`);
+      } catch (err) {
+        // Common case: file might have already been deleted or never uploaded
+        if (err.code !== 'ENOENT') {
+          console.warn(`⚠️  Failed to delete file ${url}:`, err.message);
+        }
+      }
+    }
+    
+    // 5. Delete associated records from DB
     await pool.query('DELETE FROM records WHERE project_id = ?', [id]);
     
-    // Delete project
+    // 6. Delete project from DB
     const [result] = await pool.query('DELETE FROM projects WHERE id = ?', [id]);
+    
     if (result.affectedRows === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    res.json({ success: true });
+    res.json({ success: true, cleanUp: { filesChecked: filesToDelete.length } });
   } catch (e) {
     console.error('Error in DELETE /api/projects:', e);
     res.status(500).json({ error: e.message });

@@ -6,6 +6,7 @@ import { getBatchImage, batchImageStore } from './workspace/SetupMode';
 import { useRef, useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import JsBarcode from 'jsbarcode';
+import { formatIfDate } from '../../utils/dateUtils';
 
 const cardSizes: Record<string, { width: number; height: number }> = {
   '86x54': { width: 244, height: 153 },
@@ -45,7 +46,8 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
   cardSize?: {width: number, height: number};
 }) {
   const mappedKey = mapping?.[element.id];
-  const dynamicValue = (record && mappedKey) ? record[mappedKey] : null;
+  const rawDynamicValue = (record && mappedKey) ? record[mappedKey] : null;
+  const dynamicValue = formatIfDate(rawDynamicValue);
   const storeDatasetImages = useConfiguratorStore(state => state.design.idCard.bulkWorkflow.datasetImages);
   const imageMatchColumn = useConfiguratorStore(state => state.design.idCard.bulkWorkflow.imageMatchColumn);
 

@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
 import { useConfiguratorStore } from '../../../store/useConfiguratorStore';
+import { formatIfDate } from '../../../utils/dateUtils';
 
 // Initialize PDF.js worker
 if (typeof pdfjsLib !== 'undefined' && pdfjsLib.GlobalWorkerOptions && pdfjsLib.version) {
@@ -234,6 +235,7 @@ export default function SetupMode() {
     }
   };
 
+
   const handleDatasetUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -241,12 +243,22 @@ export default function SetupMode() {
     reader.onload = (event) => {
       try {
         const data = event.target?.result;
-        const workbook = XLSX.read(data, { type: 'binary' });
+        const workbook = XLSX.read(data, { type: 'binary', cellDates: true });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
         const headers = XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[];
-        const records = XLSX.utils.sheet_to_json(worksheet);
+        const rawRecords = XLSX.utils.sheet_to_json(worksheet);
+        
+        // Process records to format dates and cleanup values
+        const records = rawRecords.map((r: any) => {
+          const cleaned: any = {};
+          for (const key of headers) {
+             // Use formatIfDate for every field to catch date objects or date-like strings
+             cleaned[key] = r[key] !== undefined ? formatIfDate(r[key]) : '';
+          }
+          return cleaned;
+        });
         
         if (headers && records.length > 0) {
           setField('idCard.bulkWorkflow.datasetColumns', headers);

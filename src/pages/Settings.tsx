@@ -29,7 +29,7 @@ const Settings = () => {
         email: '', 
         password: '', 
         role: 'admin', 
-        organization: isUltraAdmin ? '' : (user?.organization || 'GOTEK') 
+        organization: isAdmin ? '' : (user?.organization || 'GOTEK') 
     });
 
     useEffect(() => {
@@ -66,7 +66,7 @@ const Settings = () => {
             email: '', 
             password: '', 
             role: 'admin', 
-            organization: isUltraAdmin ? '' : (user?.organization || 'GOTEK') 
+            organization: isAdmin ? '' : (user?.organization || 'GOTEK') 
         });
     };
 
@@ -319,12 +319,13 @@ const Settings = () => {
                                             </div>
                                             <div className="space-y-1.5">
                                                 <Label className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">Organization</Label>
-                                                {isUltraAdmin ? (
+                                                {isAdmin ? (
                                                     <Input 
                                                         value={newAdmin.organization} 
                                                         onChange={e => setNewAdmin({...newAdmin, organization: e.target.value})} 
                                                         placeholder="Organization name" 
                                                         className="rounded-xl border-gray-200" 
+                                                        required
                                                     />
                                                 ) : (
                                                     <Input 
