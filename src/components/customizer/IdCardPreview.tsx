@@ -52,16 +52,34 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
 
   useEffect(() => {
     let active = true;
+    const value = (dynamicValue !== undefined && dynamicValue !== null) ? String(dynamicValue).trim() : (element.content || '');
+    
     if (element.type === 'qr') {
-      const val = dynamicValue || element.content || 'QR';
-      QRCode.toDataURL(val, { margin: 1, width: element.width || 100, color: { dark: element.fill || '#000000', light: '#ffffff00' } })
+      const val = value || 'QR';
+      // Use 2x resolution for better scannability (Standard margin is 4)
+      QRCode.toDataURL(val, { 
+        margin: 4, 
+        width: (element.width || 100) * 2, 
+        color: { 
+          dark: element.fill || '#000000', 
+          light: '#ffffff' // Solid white background for contrast
+        } 
+      })
         .then(url => { if (active) setGeneratedSrc(url); })
         .catch(() => {});
     } else if (element.type === 'barcode') {
-      const val = dynamicValue || element.content || '123456789';
+      const val = value || '123456789';
       try {
         const canvas = document.createElement('canvas');
-        JsBarcode(canvas, val, { displayValue: false, margin: 0, width: 2, height: element.height || 50, lineColor: element.fill || '#000000', background: 'transparent' });
+        // Increase bar width and height for 2x resolution feel, plus solid background and margin
+        JsBarcode(canvas, val, { 
+          displayValue: false, 
+          margin: 10, 
+          width: 4, // doubled bar width
+          height: (element.height || 40) * 2,
+          lineColor: element.fill || '#000000', 
+          background: '#ffffff' // Solid white background
+        });
         if (active) setGeneratedSrc(canvas.toDataURL());
       } catch (e) {
         // Silently fail for invalid barcode formats until they type a valid one
@@ -433,11 +451,11 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
               points={element.points} 
               stroke={element.stroke || '#5d5fef'} 
               strokeWidth={element.strokeWidth || 1} 
-              tension={element.tension || 0.5} 
+              tension={element.tension ?? 0.5} 
               lineCap="round" 
               lineJoin="round" 
               opacity={0.3}
-              closed
+              closed={element.closed ?? true}
             />
           </Group>
         );
@@ -448,9 +466,10 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
             points={element.points} 
             stroke={element.stroke || '#5d5fef'} 
             strokeWidth={element.strokeWidth || 2} 
-            tension={element.tension || 0.5} 
+            tension={element.tension ?? 0.5} 
             lineCap="round" 
             lineJoin="round" 
+            closed={element.closed ?? false}
           />
         );
       }
@@ -627,6 +646,7 @@ function CanvasElement({ element, onDragEnd, onTransformEnd, onClick, onDblClick
         <Transformer
           ref={trRef}
           boundBoxFunc={(oldBox, newBox) => {
+            if (element.type === 'line') return newBox;
             if (newBox.width < 5 || newBox.height < 5) return oldBox;
             return newBox;
           }}

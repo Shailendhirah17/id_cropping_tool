@@ -37,8 +37,7 @@ const navigation: NavGroup[] = [
         isCollapsible: true,
         items: [
             { label: 'Validation Hub', icon: CheckCircle, path: '/validation', allowedRoles: EDITOR_ROLES },
-            { label: 'Customizer', icon: Palette, path: '/customizer', allowedRoles: EDITOR_ROLES },
-            { label: 'Editor', icon: FileEdit, path: '/editor', allowedRoles: EDITOR_ROLES }
+            { label: 'Customizer', icon: Palette, path: '/customizer', allowedRoles: EDITOR_ROLES }
         ]
     },
     {

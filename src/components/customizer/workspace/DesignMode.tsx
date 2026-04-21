@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useConfiguratorStore } from '../../../store/useConfiguratorStore';
 import IdCardPreview from '../IdCardPreview';
-import { Layers, Database, Type, Image as ImageIcon, QrCode, Barcode, ChevronRight, Maximize2, Move, Grid3x3, Columns, ImagePlus, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { Layers, Database, Type, Image as ImageIcon, QrCode, Barcode, ChevronRight, Maximize2, Move, Grid3x3, Columns, ImagePlus, ZoomIn, ZoomOut, RotateCcw, Minus, Pencil, Activity } from 'lucide-react';
 import { Stage, Layer, Group, Line } from 'react-konva';
 import { getBatchImageKeys, hydrateBatchImageStore } from './SetupMode';
 import FontBar from './FontBar';
@@ -82,9 +82,11 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
 
   const [editingText, setEditingText] = useState<any>(null);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
-  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const drawingTool = design.idCard.drawingTool || 'none';
+  const isDrawingMode = drawingTool !== 'none';
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawingPoints, setDrawingPoints] = useState<number[]>([]);
+  const [multiPointSegments, setMultiPointSegments] = useState<number[]>([]);
 
   const { width, height } = React.useMemo(() => {
     switch (design.idCard.size) {
@@ -161,6 +163,12 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
       newElement.width = isPhotoCol ? 80 : 60;
       newElement.height = isPhotoCol ? 90 : 60;
       newElement.cornerRadius = isPhotoCol ? 6 : 0;
+    } else if (type === 'qr') {
+      newElement.width = 60;
+      newElement.height = 60;
+    } else if (type === 'barcode') {
+      newElement.width = 100;
+      newElement.height = 40;
     } else {
       newElement.width = 50;
       newElement.height = 50;
@@ -212,21 +220,76 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
     setField('idCard.selected', newId);
   };
 
+  const finalizeLine = (points: number[]) => {
+    // Deduplicate very close adjacent points to avoid redundant nodes
+    const cleanedPoints: number[] = [];
+    for (let i = 0; i < points.length; i += 2) {
+      if (cleanedPoints.length >= 2) {
+        const lastX = cleanedPoints[cleanedPoints.length - 2];
+        const lastY = cleanedPoints[cleanedPoints.length - 1];
+        if (Math.abs(points[i] - lastX) < 1 && Math.abs(points[i + 1] - lastY) < 1) {
+          continue;
+        }
+      }
+      cleanedPoints.push(points[i], points[i + 1]);
+    }
+
+    // Must have at least two distinct points
+    if (cleanedPoints.length < 4) {
+      setDrawingPoints([]);
+      setMultiPointSegments([]);
+      return;
+    }
+
+    // Normalize points: make x,y the top-left and shift all points
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < cleanedPoints.length; i += 2) {
+      minX = Math.min(minX, cleanedPoints[i]);
+      minY = Math.min(minY, cleanedPoints[i+1]);
+      maxX = Math.max(maxX, cleanedPoints[i]);
+      maxY = Math.max(maxY, cleanedPoints[i+1]);
+    }
+
+    const newId = `line-${Date.now()}`;
+    const line: any = {
+      id: newId,
+      type: 'line',
+      x: minX,
+      y: minY,
+      width: Math.max(maxX - minX, 0),
+      height: Math.max(maxY - minY, 0),
+      points: cleanedPoints.map((p: number, i: number) => i % 2 === 0 ? p - minX : p - minY),
+      stroke: '#5d5fef',
+      strokeWidth: 2,
+      tension: drawingTool === 'freeform' ? 0.5 : 0,
+      lineCap: 'round',
+      lineJoin: 'round',
+      closed: false, // Always open based on user feedback
+    };
+    
+    setField(`idCard.${activeSide}.elements`, [...elements, line]);
+    setField('idCard.selected', newId);
+    setDrawingPoints([]);
+    setMultiPointSegments([]);
+  };
+
   const handleMouseDown = (e: any) => {
     if (!isDrawingMode) return;
     
-    setIsDrawing(true);
     const stage = e.target.getStage();
     const pos = stage.getPointerPosition();
-    
-    // Convert absolute to group-relative
     const group = stage.findOne('#card-group');
     if (!group) return;
-    const transform = group.getAbsoluteTransform().copy();
-    transform.invert();
+    const transform = group.getAbsoluteTransform().copy().invert();
     const relativePos = transform.point(pos);
 
-    setDrawingPoints([relativePos.x, relativePos.y]);
+    if (drawingTool === 'multipoint') {
+      setIsDrawing(true);
+      setDrawingPoints(prev => [...prev, relativePos.x, relativePos.y]);
+    } else {
+      setIsDrawing(true);
+      setDrawingPoints([relativePos.x, relativePos.y, relativePos.x, relativePos.y]);
+    }
   };
 
   const handleMouseMove = (e: any) => {
@@ -236,51 +299,63 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
     const pos = stage.getPointerPosition();
     const group = stage.findOne('#card-group');
     if (!group) return;
-    const transform = group.getAbsoluteTransform().copy();
-    transform.invert();
+    const transform = group.getAbsoluteTransform().copy().invert();
     const relativePos = transform.point(pos);
 
-    setDrawingPoints(prev => [...prev, relativePos.x, relativePos.y]);
+    if (drawingTool === 'straight') {
+      // Automatic axis snapping for "straight" line
+      let x = relativePos.x;
+      let y = relativePos.y;
+      const dx = Math.abs(x - drawingPoints[0]);
+      const dy = Math.abs(y - drawingPoints[1]);
+      if (dx > dy) y = drawingPoints[1];
+      else x = drawingPoints[0];
+      setDrawingPoints([drawingPoints[0], drawingPoints[1], x, y]);
+    } else if (drawingTool === '2point') {
+      // Free angle for "2point" line
+      setDrawingPoints([drawingPoints[0], drawingPoints[1], relativePos.x, relativePos.y]);
+    } else if (drawingTool === 'freeform') {
+      setDrawingPoints(prev => [...prev, relativePos.x, relativePos.y]);
+    } else if (drawingTool === 'multipoint') {
+      // preview segment for multipoint
+      const pts = [...drawingPoints];
+      if (pts.length >= 2) {
+        setMultiPointSegments([pts[pts.length - 2], pts[pts.length - 1], relativePos.x, relativePos.y]);
+      }
+    }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: any) => {
     if (!isDrawing) return;
-    setIsDrawing(false);
     
-    if (drawingPoints.length < 4) {
-      setDrawingPoints([]);
-      return;
+    if (drawingTool === 'straight' || drawingTool === '2point' || drawingTool === 'freeform') {
+      setIsDrawing(false);
+      finalizeLine(drawingPoints);
+      setField('idCard.drawingTool', 'none');
     }
+  };
 
-    // Normalize points: make x,y the top-left and shift all points
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (let i = 0; i < drawingPoints.length; i += 2) {
-      minX = Math.min(minX, drawingPoints[i]);
-      minY = Math.min(minY, drawingPoints[i+1]);
-      maxX = Math.max(maxX, drawingPoints[i]);
-      maxY = Math.max(maxY, drawingPoints[i+1]);
-    }
-
-    const newId = `line-${Date.now()}`;
-    const line: any = {
-      id: newId,
-      type: 'line',
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-      points: drawingPoints.map((p: number, i: number) => i % 2 === 0 ? p - minX : p - minY),
-      stroke: '#5d5fef',
-      strokeWidth: 2,
-      tension: 0.5,
-      lineCap: 'round',
-      lineJoin: 'round',
-      closed: true,
+  // Keyboard support for finishing multi-point line
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (drawingTool === 'multipoint' && isDrawing && e.key === 'Enter') {
+        setIsDrawing(false);
+        finalizeLine(drawingPoints);
+        setMultiPointSegments([]);
+        setField('idCard.drawingTool', 'none');
+      }
     };
-    
-    setField(`idCard.${activeSide}.elements`, [...elements, line]);
-    setField('idCard.selected', newId);
-    setDrawingPoints([]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [drawingTool, isDrawing, drawingPoints]);
+
+  const handleDblClick = () => {
+    if (drawingTool === 'multipoint' && isDrawing) {
+      setIsDrawing(false);
+      finalizeLine(drawingPoints);
+      setMultiPointSegments([]);
+      setField('idCard.drawingTool', 'none');
+    }
   };
 
   return (
@@ -320,21 +395,42 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
           {activeTab === 'frames' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] font-black uppercase text-slate-400">Image Frames (Masks)</div>
-                <button 
-                  onClick={() => setIsDrawingMode(!isDrawingMode)}
-                  className={`px-3 py-1 rounded-full text-[10px] font-black uppercase transition-all flex items-center gap-1.5 ${isDrawingMode ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                >
-                  <div className={`w-1.5 h-1.5 rounded-full ${isDrawingMode ? 'bg-white animate-pulse' : 'bg-slate-400'}`} />
-                  {isDrawingMode ? 'Stop Drawing' : 'Draw'}
-                </button>
+                <div className="text-[11px] font-black uppercase text-slate-400">Drawing Tools</div>
+                {isDrawingMode && (
+                  <button 
+                    onClick={() => setField('idCard.drawingTool', 'none')}
+                    className="px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-bold hover:bg-red-100 transition-all"
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {[
+                  { id: 'straight', label: 'Straight', icon: Minus },
+                  { id: '2point', label: '2-Point', icon: Maximize2 },
+                  { id: 'multipoint', label: 'Multi', icon: Activity },
+                  { id: 'freeform', label: 'Free', icon: Pencil },
+                ].map((tool) => (
+                  <button
+                    key={tool.id}
+                    onClick={() => setField('idCard.drawingTool', drawingTool === tool.id ? 'none' : tool.id)}
+                    className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${drawingTool === tool.id ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600'}`}
+                    title={tool.label}
+                  >
+                    <tool.icon size={16} />
+                    <span className="text-[8px] font-bold mt-1 uppercase">{tool.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="text-[11px] font-black uppercase text-slate-400 mb-2">Image Frames (Masks)</div>
               <div className="grid grid-cols-4 gap-2 max-h-[400px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200">
                 {AVAILABLE_FRAMES.map((frame) => (
                   <button
                     key={frame.id}
                     onClick={() => {
-                        setIsDrawingMode(false);
+                        setField('idCard.drawingTool', 'none');
                         addFrame(frame.id);
                     }}
                     className="flex flex-col items-center justify-center p-2 bg-slate-50 border border-slate-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-200 hover:shadow-sm transition-all group aspect-square"
@@ -400,6 +496,7 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
+            onDblClick={handleDblClick}
             style={{ cursor: isDrawingMode ? 'crosshair' : 'grab' }}
           >
             <Layer>
@@ -479,15 +576,25 @@ export default function DesignMode({ stageRef, idCardStageRef, zoom, setZoom }: 
                   }
                 }}
               />
-              {isDrawing && drawingPoints.length > 2 && (
+              {/* Drawing Preview */}
+              {isDrawing && drawingPoints.length >= 2 && (
                 <Line
                   points={drawingPoints}
                   stroke="#5d5fef"
                   strokeWidth={2}
-                  tension={0.5}
+                  tension={drawingTool === 'freeform' ? 0.5 : 0}
                   lineCap="round"
                   lineJoin="round"
-                  closed
+                  closed={false}
+                  opacity={0.5}
+                />
+              )}
+              {isDrawing && multiPointSegments.length === 4 && (
+                <Line
+                  points={multiPointSegments}
+                  stroke="#5d5fef"
+                  strokeWidth={2}
+                  dash={[5, 5]}
                   opacity={0.5}
                 />
               )}

@@ -231,11 +231,19 @@ const Settings = () => {
                         <div className="space-y-3 px-1 mt-2">
                             <div className="flex items-center justify-between text-sm py-1">
                                 <span className="text-gray-500">Template Editing</span>
-                                <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-none shadow-none">Enabled</Badge>
+                                {isAdmin || isSubAdmin ? (
+                                    <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-none shadow-none">Enabled</Badge>
+                                ) : (
+                                    <span className="font-bold text-gray-400">Restricted</span>
+                                )}
                             </div>
                             <div className="flex items-center justify-between text-sm py-1">
                                 <span className="text-gray-500">Card Generation</span>
-                                <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-none shadow-none">Active</Badge>
+                                {isAdmin || isSubAdmin ? (
+                                    <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-none shadow-none">Active</Badge>
+                                ) : (
+                                    <span className="font-bold text-gray-400">Restricted</span>
+                                )}
                             </div>
                             <div className="flex items-center justify-between text-sm py-1">
                                 <span className="text-gray-500">User Management</span>

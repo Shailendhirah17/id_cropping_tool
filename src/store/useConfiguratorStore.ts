@@ -96,6 +96,7 @@ export interface Design {
     defaultColor?: string;
     photoUrl?: string;
     logoUrl?: string;
+    drawingTool: 'none' | 'straight' | '2point' | 'multipoint' | 'freeform';
     front: SideData;
     back: SideData;
     bulkWorkflow: {
@@ -174,6 +175,7 @@ const defaultDesign: Design = {
     showGrid: false,
     defaultFontFamily: 'Montserrat',
     defaultColor: '#1e293b',
+    drawingTool: 'none',
     front: {
       backgroundColor: '#ffffff',
       elements: [],
